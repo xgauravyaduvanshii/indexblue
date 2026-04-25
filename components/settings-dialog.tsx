@@ -302,10 +302,12 @@ export function PreferencesSection({
   user,
   isCustomInstructionsEnabled,
   setIsCustomInstructionsEnabledAction,
+  variant = 'full',
 }: {
   user: any;
   isCustomInstructionsEnabled?: boolean;
   setIsCustomInstructionsEnabledAction?: (value: boolean | ((val: boolean) => boolean)) => void;
+  variant?: 'full' | 'builder-general' | 'builder-models';
 }) {
   const [searchProvider, setSearchProvider] = useSyncedPreferences<'exa' | 'parallel' | 'firecrawl'>(
     'scira-search-provider',
@@ -526,6 +528,11 @@ export function PreferencesSection({
   const [preferencesTab, setPreferencesTab] = useState<'general' | 'customize'>('general');
   const isMaxUser = Boolean(user?.isMaxUser);
   const hasPaidAccess = Boolean(user?.isProUser || user?.isMaxUser);
+  const showSegmentedTabs = variant === 'full';
+  const showBuilderGeneral = variant !== 'builder-models';
+  const showBuilderModels = variant !== 'builder-general';
+  const showGeneralPanel = showSegmentedTabs ? preferencesTab === 'general' : showBuilderGeneral;
+  const showCustomizePanel = showSegmentedTabs ? preferencesTab === 'customize' : showBuilderModels;
 
   const updateAutoRouterRoute = useCallback(
     (index: number, update: Partial<AutoRouterRoute>) => {
@@ -559,298 +566,312 @@ export function PreferencesSection({
   return (
     <div>
       <div>
-        <KumoTabs
-          variant="segmented"
-          value={preferencesTab}
-          onValueChange={(v) => setPreferencesTab(v as 'general' | 'customize')}
-          className="w-full [--color-kumo-tint:var(--accent)] [--color-kumo-base:var(--background)] [--color-kumo-recessed:var(--muted)] [--color-kumo-surface:var(--card)] [--text-color-kumo-default:var(--foreground)] [--text-color-kumo-strong:var(--muted-foreground)] [--text-color-kumo-subtle:var(--muted-foreground)] [--color-kumo-ring:var(--border)]"
-          listClassName="w-full [&>button]:flex-1 [&>button]:justify-center"
-          tabs={[
-            { value: 'general', label: 'General' },
-            { value: 'customize', label: 'Customize' },
-          ]}
-        />
+        {showSegmentedTabs && (
+          <KumoTabs
+            variant="segmented"
+            value={preferencesTab}
+            onValueChange={(v) => setPreferencesTab(v as 'general' | 'customize')}
+            className="w-full [--color-kumo-tint:var(--accent)] [--color-kumo-base:var(--background)] [--color-kumo-recessed:var(--muted)] [--color-kumo-surface:var(--card)] [--text-color-kumo-default:var(--foreground)] [--text-color-kumo-strong:var(--muted-foreground)] [--text-color-kumo-subtle:var(--muted-foreground)] [--color-kumo-ring:var(--border)]"
+            listClassName="w-full [&>button]:flex-1 [&>button]:justify-center"
+            tabs={[
+              { value: 'general', label: 'General' },
+              { value: 'customize', label: 'Customize' },
+            ]}
+          />
+        )}
 
         {/* ── General tab ── */}
-        {preferencesTab === 'general' && (
-          <div className="mt-4">
+        {showGeneralPanel && (
+          <div className={cn(showSegmentedTabs && 'mt-4')}>
             <div className="rounded-xl border border-border/60 divide-y divide-border/40 px-4">
-              {/* Theme */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Theme</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Choose a theme for the app</p>
-                </div>
-                <ThemeSwitcher />
-              </div>
-
-              {/* Custom Instructions toggle */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Custom Instructions</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Personalise how the AI responds to you</p>
-                </div>
-                <Switch id="enable-instructions" checked={enabled} onCheckedChange={setEnabled} />
-              </div>
-
-              {/* Custom Instructions editor - inline expand */}
-              {enabled && (
-                <div className="py-3.5 space-y-2.5">
-                  {customInstructionsLoading ? (
-                    <Skeleton className="h-20 w-full rounded-lg" />
-                  ) : (
-                    <Textarea
-                      id="instructions"
-                      placeholder="e.g. 'Always provide code examples' or 'Keep responses concise and practical'"
-                      value={content}
-                      onChange={(e) => setContent(e.target.value)}
-                      className="min-h-[80px] resize-y text-sm rounded-lg border-border/60"
-                      style={{ maxHeight: '25dvh' }}
-                      onFocus={(e) => {
-                        try {
-                          e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-                        } catch {}
-                      }}
-                      disabled={isSaving}
-                    />
-                  )}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={isSaving || !content.trim() || customInstructionsLoading}
-                      size="sm"
-                      className="h-7 text-xs rounded-lg px-3"
-                    >
-                      {isSaving ? (
-                        <>
-                          <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
-                          Saving
-                        </>
-                      ) : (
-                        <>
-                          <FloppyDiskIcon className="w-3 h-3 mr-1.5" />
-                          Save
-                        </>
-                      )}
-                    </Button>
-                    {customInstructions && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={handleDelete}
-                        disabled={isSaving || customInstructionsLoading}
-                        size="sm"
-                        className="h-7 px-2 rounded-lg"
-                      >
-                        <TrashIcon className="w-3 h-3" />
-                      </Button>
-                    )}
-                    {customInstructions && !customInstructionsLoading && (
-                      <span className="text-[11px] text-muted-foreground/50 ml-auto">
-                        Updated {new Date(customInstructions.updatedAt).toLocaleDateString()}
-                      </span>
-                    )}
+              {showBuilderGeneral && (
+                <>
+                  {/* Theme */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Theme</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Choose a theme for the app</p>
+                    </div>
+                    <ThemeSwitcher />
                   </div>
-                </div>
+
+                  {/* Custom Instructions toggle */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Custom Instructions</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Personalise how the AI responds to you</p>
+                    </div>
+                    <Switch id="enable-instructions" checked={enabled} onCheckedChange={setEnabled} />
+                  </div>
+
+                  {/* Custom Instructions editor - inline expand */}
+                  {enabled && (
+                    <div className="py-3.5 space-y-2.5">
+                      {customInstructionsLoading ? (
+                        <Skeleton className="h-20 w-full rounded-lg" />
+                      ) : (
+                        <Textarea
+                          id="instructions"
+                          placeholder="e.g. 'Always provide code examples' or 'Keep responses concise and practical'"
+                          value={content}
+                          onChange={(e) => setContent(e.target.value)}
+                          className="min-h-[80px] resize-y text-sm rounded-lg border-border/60"
+                          style={{ maxHeight: '25dvh' }}
+                          onFocus={(e) => {
+                            try {
+                              e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+                            } catch {}
+                          }}
+                          disabled={isSaving}
+                        />
+                      )}
+                      <div className="flex items-center gap-2">
+                        <Button
+                          type="button"
+                          onClick={handleSave}
+                          disabled={isSaving || !content.trim() || customInstructionsLoading}
+                          size="sm"
+                          className="h-7 text-xs rounded-lg px-3"
+                        >
+                          {isSaving ? (
+                            <>
+                              <Loader2 className="w-3 h-3 mr-1.5 animate-spin" />
+                              Saving
+                            </>
+                          ) : (
+                            <>
+                              <FloppyDiskIcon className="w-3 h-3 mr-1.5" />
+                              Save
+                            </>
+                          )}
+                        </Button>
+                        {customInstructions && (
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={handleDelete}
+                            disabled={isSaving || customInstructionsLoading}
+                            size="sm"
+                            className="h-7 px-2 rounded-lg"
+                          >
+                            <TrashIcon className="w-3 h-3" />
+                          </Button>
+                        )}
+                        {customInstructions && !customInstructionsLoading && (
+                          <span className="text-[11px] text-muted-foreground/50 ml-auto">
+                            Updated {new Date(customInstructions.updatedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Location Metadata toggle */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Location Metadata</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Include approximate location for location-aware answers
+                      </p>
+                    </div>
+                    <Switch
+                      id="location-metadata"
+                      checked={locationMetadataEnabled}
+                      onCheckedChange={setLocationMetadataEnabled}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Scroll to Latest Turn</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Jump to the newest messages when opening existing chats
+                      </p>
+                    </div>
+                    <Switch
+                      id="scroll-to-latest-on-open"
+                      checked={scrollToLatestOnOpen}
+                      onCheckedChange={setScrollToLatestOnOpen}
+                    />
+                  </div>
+                </>
               )}
 
-              {/* Location Metadata toggle */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Location Metadata</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Include approximate location for location-aware answers
-                  </p>
-                </div>
-                <Switch
-                  id="location-metadata"
-                  checked={locationMetadataEnabled}
-                  onCheckedChange={setLocationMetadataEnabled}
-                />
-              </div>
-
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Scroll to Latest Turn</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Jump to the newest messages when opening existing chats
-                  </p>
-                </div>
-                <Switch
-                  id="scroll-to-latest-on-open"
-                  checked={scrollToLatestOnOpen}
-                  onCheckedChange={setScrollToLatestOnOpen}
-                />
-              </div>
-
-              {/* Search Provider */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium">Search Provider</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">Engine used for web searches</p>
-                </div>
-                <Select value={searchProvider} onValueChange={(v) => handleSearchProviderChange(v as any)}>
-                  <SelectTrigger className="w-[140px] h-8 text-xs rounded-lg shrink-0">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {searchProviders.map((p) => (
-                      <SelectItem key={p.value} value={p.value}>
-                        <div className="flex items-center gap-2">
-                          <p.icon className="size-3.5 shrink-0" />
-                          <span>{p.label}</span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
-              {/* Extreme Search Model (Pro only) */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium">Extreme Agent Model</p>
-                    {!hasPaidAccess && (
-                      <span className="font-pixel text-xs text-muted-foreground/50 uppercase tracking-wider">Pro</span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">Choose which AI model powers extreme agent</p>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild disabled={!hasPaidAccess}>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-[240px] h-8 text-xs rounded-lg shrink-0 justify-between font-normal"
-                      disabled={!hasPaidAccess}
-                    >
-                      {extremeSearchModels.find((m) => m.value === (hasPaidAccess ? extremeSearchModel : 'scira-ext-1'))
-                        ?.label ?? 'Grok 4.1 Fast Reasoning'}
-                      <ChevronDown className="size-3.5 opacity-50" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-[280px]">
-                    <DropdownMenuRadioGroup
-                      value={extremeSearchModel}
-                      onValueChange={(v) => handleExtremeSearchModelChange(v as any)}
-                    >
-                      {extremeSearchModels.map((m) => (
-                        <DropdownMenuRadioItem key={m.value} value={m.value} className="text-xs">
-                          {m.label}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-
-              {/* Auto Router toggle (Pro only) */}
-              <div className="flex items-center justify-between py-3.5 gap-6">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium">Auto Model Router</p>
-                    {!hasPaidAccess && (
-                      <span className="font-pixel text-xs text-muted-foreground/50 uppercase tracking-wider">Pro</span>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    Route queries to the best model based on intent
-                  </p>
-                </div>
-                <Switch
-                  id="auto-router-enabled"
-                  checked={hasPaidAccess ? autoRouterEnabled : false}
-                  onCheckedChange={(value) => {
-                    if (!hasPaidAccess) return;
-                    setAutoRouterEnabled(value);
-                  }}
-                  disabled={!hasPaidAccess}
-                />
-              </div>
-
-              {/* Auto Router routes - inline expand (paid + enabled only) */}
-              {hasPaidAccess && autoRouterEnabled && (
-                <div className="py-3.5 space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <p className="text-xs text-muted-foreground font-medium">Routes</p>
-                    <div className="flex items-center gap-1.5">
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-6 text-[11px] px-2 rounded-md"
-                        onClick={() => setAutoRouterConfig({ routes: getDefaultAutoRouterRoutes() })}
-                      >
-                        Reset
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-6 text-[11px] px-2 rounded-md"
-                        onClick={addAutoRouterRoute}
-                      >
-                        + Add
-                      </Button>
+              {showBuilderModels && (
+                <>
+                  {/* Search Provider */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium">Search Provider</p>
+                      <p className="text-xs text-muted-foreground mt-0.5">Engine used for web searches</p>
                     </div>
+                    <Select value={searchProvider} onValueChange={(v) => handleSearchProviderChange(v as any)}>
+                      <SelectTrigger className="w-[140px] h-8 text-xs rounded-lg shrink-0">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {searchProviders.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>
+                            <div className="flex items-center gap-2">
+                              <p.icon className="size-3.5 shrink-0" />
+                              <span>{p.label}</span>
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  {(autoRouterConfig?.routes || []).length === 0 ? (
-                    <p className="text-xs text-muted-foreground/60 py-2">No routes configured.</p>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      {(autoRouterConfig?.routes || []).map((route: AutoRouterRoute, index: number) => (
-                        <div key={index} className="rounded-lg border border-border/50 p-3">
-                          <div className="flex items-center justify-between mb-2">
-                            <span className="text-[11px] text-muted-foreground/50">Route {index + 1}</span>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                              onClick={() => removeAutoRouterRoute(index)}
-                            >
-                              <TrashIcon className="h-3 w-3" />
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 mb-2">
-                            <Input
-                              value={route.name}
-                              onChange={(e) => updateAutoRouterRoute(index, { name: e.target.value })}
-                              placeholder="Name"
-                              className="h-7 text-xs rounded-md"
-                            />
-                            <ModelSelectorDialog
-                              selectedModel={route.model}
-                              onModelSelect={(v) => updateAutoRouterRoute(index, { model: v })}
-                              user={user}
-                              isProUser={hasPaidAccess}
-                              isMaxUser={isMaxUser}
-                              excludeModels={['scira-auto']}
-                              className="w-full h-7"
-                              compact
-                            />
-                          </div>
-                          <Textarea
-                            value={route.description}
-                            onChange={(e) => updateAutoRouterRoute(index, { description: e.target.value })}
-                            placeholder="Intent description"
-                            className="min-h-[40px] text-xs resize-none rounded-md"
-                          />
+
+                  {/* Extreme Search Model (Pro only) */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">Extreme Agent Model</p>
+                        {!hasPaidAccess && (
+                          <span className="font-pixel text-xs text-muted-foreground/50 uppercase tracking-wider">
+                            Pro
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">Choose which AI model powers extreme agent</p>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild disabled={!hasPaidAccess}>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-[240px] h-8 text-xs rounded-lg shrink-0 justify-between font-normal"
+                          disabled={!hasPaidAccess}
+                        >
+                          {extremeSearchModels.find((m) => m.value === (hasPaidAccess ? extremeSearchModel : 'scira-ext-1'))
+                            ?.label ?? 'Grok 4.1 Fast Reasoning'}
+                          <ChevronDown className="size-3.5 opacity-50" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="w-[280px]">
+                        <DropdownMenuRadioGroup
+                          value={extremeSearchModel}
+                          onValueChange={(v) => handleExtremeSearchModelChange(v as any)}
+                        >
+                          {extremeSearchModels.map((m) => (
+                            <DropdownMenuRadioItem key={m.value} value={m.value} className="text-xs">
+                              {m.label}
+                            </DropdownMenuRadioItem>
+                          ))}
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+
+                  {/* Auto Router toggle (Pro only) */}
+                  <div className="flex items-center justify-between py-3.5 gap-6">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium">Auto Model Router</p>
+                        {!hasPaidAccess && (
+                          <span className="font-pixel text-xs text-muted-foreground/50 uppercase tracking-wider">
+                            Pro
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-0.5">
+                        Route queries to the best model based on intent
+                      </p>
+                    </div>
+                    <Switch
+                      id="auto-router-enabled"
+                      checked={hasPaidAccess ? autoRouterEnabled : false}
+                      onCheckedChange={(value) => {
+                        if (!hasPaidAccess) return;
+                        setAutoRouterEnabled(value);
+                      }}
+                      disabled={!hasPaidAccess}
+                    />
+                  </div>
+
+                  {/* Auto Router routes - inline expand (paid + enabled only) */}
+                  {hasPaidAccess && autoRouterEnabled && (
+                    <div className="py-3.5 space-y-2.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs text-muted-foreground font-medium">Routes</p>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-[11px] px-2 rounded-md"
+                            onClick={() => setAutoRouterConfig({ routes: getDefaultAutoRouterRoutes() })}
+                          >
+                            Reset
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-6 text-[11px] px-2 rounded-md"
+                            onClick={addAutoRouterRoute}
+                          >
+                            + Add
+                          </Button>
                         </div>
-                      ))}
+                      </div>
+                      {(autoRouterConfig?.routes || []).length === 0 ? (
+                        <p className="text-xs text-muted-foreground/60 py-2">No routes configured.</p>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                          {(autoRouterConfig?.routes || []).map((route: AutoRouterRoute, index: number) => (
+                            <div key={index} className="rounded-lg border border-border/50 p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <span className="text-[11px] text-muted-foreground/50">Route {index + 1}</span>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-5 w-5 text-muted-foreground hover:text-destructive"
+                                  onClick={() => removeAutoRouterRoute(index)}
+                                >
+                                  <TrashIcon className="h-3 w-3" />
+                                </Button>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 mb-2">
+                                <Input
+                                  value={route.name}
+                                  onChange={(e) => updateAutoRouterRoute(index, { name: e.target.value })}
+                                  placeholder="Name"
+                                  className="h-7 text-xs rounded-md"
+                                />
+                                <ModelSelectorDialog
+                                  selectedModel={route.model}
+                                  onModelSelect={(v) => updateAutoRouterRoute(index, { model: v })}
+                                  user={user}
+                                  isProUser={hasPaidAccess}
+                                  isMaxUser={isMaxUser}
+                                  excludeModels={['scira-auto']}
+                                  className="w-full h-7"
+                                  compact
+                                />
+                              </div>
+                              <Textarea
+                                value={route.description}
+                                onChange={(e) => updateAutoRouterRoute(index, { description: e.target.value })}
+                                placeholder="Intent description"
+                                className="min-h-[40px] text-xs resize-none rounded-md"
+                              />
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
-                </div>
+                </>
               )}
             </div>
           </div>
         )}
 
         {/* ── Customize tab ── */}
-        {preferencesTab === 'customize' && (
-          <div className="mt-4 space-y-5">
+        {showCustomizePanel && (
+          <div className={cn(showSegmentedTabs && 'mt-4', 'space-y-5')}>
             {/* Search Modes - toggle visibility & reorder */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1086,6 +1107,276 @@ export function PreferencesSection({
             </div>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+type BuilderSectionTab = 'general' | 'models' | 'skills' | 'plugins';
+
+export function BuilderSection({
+  user,
+  isProUser,
+  isCustomInstructionsEnabled,
+  setIsCustomInstructionsEnabledAction,
+}: {
+  user: any;
+  isProUser?: boolean;
+  isCustomInstructionsEnabled?: boolean;
+  setIsCustomInstructionsEnabledAction?: (value: boolean | ((val: boolean) => boolean)) => void;
+}) {
+  const [activeSection, setActiveSection] = useState<BuilderSectionTab>('general');
+  const mcpEnabled = process.env.NEXT_PUBLIC_MCP_ENABLED === 'true';
+
+  const sections: Array<{
+    value: BuilderSectionTab;
+    label: string;
+    group: string;
+    description: string;
+    icon: any;
+  }> = [
+    {
+      value: 'general',
+      label: 'General',
+      group: 'Builder',
+      description: 'Theme, custom instructions, and baseline behavior.',
+      icon: Settings02Icon,
+    },
+    {
+      value: 'models',
+      label: 'Models & Providers',
+      group: 'Builder',
+      description: 'Search engines, routing, preferred models, and mode ordering.',
+      icon: Rocket01Icon,
+    },
+    {
+      value: 'skills',
+      label: 'Skills & Context',
+      group: 'Workspace',
+      description: 'Custom instructions, memories, and uploaded files.',
+      icon: Brain02Icon,
+    },
+    {
+      value: 'plugins',
+      label: 'Plugins & Integrations',
+      group: 'Workspace',
+      description: 'Connectors and MCP server integrations.',
+      icon: ConnectIcon,
+    },
+  ];
+
+  const groupedSections = sections.reduce(
+    (acc, section) => {
+      acc[section.group] ??= [];
+      acc[section.group].push(section);
+      return acc;
+    },
+    {} as Record<string, typeof sections>,
+  );
+
+  const activeMeta = sections.find((section) => section.value === activeSection) ?? sections[0];
+
+  return (
+    <div className="space-y-6">
+      <div className="rounded-2xl border border-border/60 bg-card/30 p-5 sm:p-6">
+        <div className="flex items-start gap-4">
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-accent/40">
+            <HugeiconsIcon icon={Rocket01Icon} size={18} strokeWidth={1.5} />
+          </div>
+          <div className="min-w-0 space-y-2">
+            <div>
+              <p className="font-pixel text-[11px] uppercase tracking-[0.14em] text-muted-foreground/70">Builder</p>
+              <h3 className="text-xl font-semibold tracking-tight">Configure your Indexblue builder workspace</h3>
+            </div>
+            <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
+              This is the builder control surface inspired by the Stagewise settings flow. Use it to shape how models,
+              context, and integrations behave across your workspace.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="space-y-4">
+          <div className="lg:hidden">
+            <Select value={activeSection} onValueChange={(value) => setActiveSection(value as BuilderSectionTab)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {sections.map((section) => (
+                  <SelectItem key={section.value} value={section.value}>
+                    {section.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="hidden rounded-2xl border border-border/60 bg-card/20 p-2 lg:block">
+            <div className="space-y-4">
+              {Object.entries(groupedSections).map(([group, items]) => (
+                <div key={group} className="space-y-1.5">
+                  <p className="px-2 py-1 font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
+                    {group}
+                  </p>
+                  {items.map((section) => (
+                    <button
+                      key={section.value}
+                      type="button"
+                      onClick={() => setActiveSection(section.value)}
+                      className={cn(
+                        'w-full rounded-xl border px-3 py-3 text-left transition-colors',
+                        activeSection === section.value
+                          ? 'border-border bg-accent/70 text-foreground'
+                          : 'border-transparent text-muted-foreground hover:bg-accent/40 hover:text-foreground',
+                      )}
+                    >
+                      <div className="flex items-start gap-3">
+                        <HugeiconsIcon icon={section.icon} size={16} strokeWidth={1.5} className="mt-0.5 shrink-0" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{section.label}</p>
+                          <p className="mt-0.5 text-xs leading-5 text-muted-foreground">{section.description}</p>
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-border/60 bg-background/70 p-5 sm:p-6">
+            <div className="flex items-start gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/30">
+                <HugeiconsIcon icon={activeMeta.icon} size={16} strokeWidth={1.5} />
+              </div>
+              <div>
+                <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
+                  {activeMeta.group}
+                </p>
+                <h4 className="mt-1 text-lg font-semibold">{activeMeta.label}</h4>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{activeMeta.description}</p>
+              </div>
+            </div>
+          </div>
+
+          {activeSection === 'general' && (
+            <PreferencesSection
+              user={user}
+              isCustomInstructionsEnabled={isCustomInstructionsEnabled}
+              setIsCustomInstructionsEnabledAction={setIsCustomInstructionsEnabledAction}
+              variant="builder-general"
+            />
+          )}
+
+          {activeSection === 'models' && (
+            <PreferencesSection
+              user={user}
+              isCustomInstructionsEnabled={isCustomInstructionsEnabled}
+              setIsCustomInstructionsEnabledAction={setIsCustomInstructionsEnabledAction}
+              variant="builder-models"
+            />
+          )}
+
+          {activeSection === 'skills' && (
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="rounded-2xl border border-border/60 bg-card/30 p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/30">
+                      <RobotIcon className="h-4 w-4" />
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <h5 className="text-sm font-semibold">Custom Instructions</h5>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          {isCustomInstructionsEnabled
+                            ? 'Enabled and ready to shape model behavior.'
+                            : 'Currently disabled for this workspace.'}
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => setActiveSection('general')}>
+                        Edit in General
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-border/60 bg-card/30 p-5">
+                  <div className="flex items-start gap-3">
+                    <div className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-muted/30">
+                      <HugeiconsIcon icon={Attachment01Icon} size={16} strokeWidth={1.5} />
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <h5 className="text-sm font-semibold">Workspace Context</h5>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                          Review the uploaded files and remembered facts that influence retrieval and responses.
+                        </p>
+                      </div>
+                      <Button size="sm" variant="outline" onClick={() => setActiveSection('plugins')}>
+                        Open plugins
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border border-border/60 bg-card/20 p-5 sm:p-6">
+                <div className="mb-4">
+                  <h5 className="text-base font-semibold">Memories</h5>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Inspect long-lived context captured from your conversations.
+                  </p>
+                </div>
+                <MemoriesSection />
+              </div>
+
+              <div className="rounded-2xl border border-border/60 bg-card/20 p-5 sm:p-6">
+                <div className="mb-4">
+                  <h5 className="text-base font-semibold">Uploads</h5>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Manage files that can be referenced while you build and search.
+                  </p>
+                </div>
+                <UploadsSection />
+              </div>
+            </div>
+          )}
+
+          {activeSection === 'plugins' && (
+            <div className="space-y-4">
+              <div className="rounded-2xl border border-border/60 bg-card/20 p-5 sm:p-6">
+                <div className="mb-4">
+                  <h5 className="text-base font-semibold">Connectors</h5>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Attach third-party services and sync external data into Indexblue.
+                  </p>
+                </div>
+                <ConnectorsSection user={user} />
+              </div>
+
+              <div className="rounded-2xl border border-border/60 bg-card/20 p-5 sm:p-6">
+                <div className="mb-4">
+                  <h5 className="text-base font-semibold">MCP Servers</h5>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Register model context protocol servers for custom tools and workflows.
+                  </p>
+                </div>
+                {mcpEnabled ? (
+                  <McpSection user={user} isProUser={isProUser} />
+                ) : (
+                  <div className="rounded-xl border border-dashed border-border/60 bg-muted/10 p-6 text-sm text-muted-foreground">
+                    MCP settings are currently disabled in this environment.
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -3910,6 +4201,11 @@ export function SettingsDialog({
       icon: ({ className }: { className?: string }) => <HugeiconsIcon icon={Settings02Icon} className={className} />,
     },
     {
+      value: 'builder',
+      label: 'Builder',
+      icon: ({ className }: { className?: string }) => <HugeiconsIcon icon={Rocket01Icon} className={className} />,
+    },
+    {
       value: 'connectors',
       label: 'Connectors',
       icon: ({ className }: { className?: string }) => <HugeiconsIcon icon={ConnectIcon} className={className} />,
@@ -3955,6 +4251,15 @@ export function SettingsDialog({
       {currentTab === 'preferences' && (
         <PreferencesSection
           user={user}
+          isCustomInstructionsEnabled={isCustomInstructionsEnabled}
+          setIsCustomInstructionsEnabledAction={setIsCustomInstructionsEnabledAction}
+        />
+      )}
+
+      {currentTab === 'builder' && (
+        <BuilderSection
+          user={user}
+          isProUser={isProUser}
           isCustomInstructionsEnabled={isCustomInstructionsEnabled}
           setIsCustomInstructionsEnabledAction={setIsCustomInstructionsEnabledAction}
         />

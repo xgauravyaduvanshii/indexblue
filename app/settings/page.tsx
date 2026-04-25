@@ -6,6 +6,7 @@ import {
   UsageSection,
   PreferencesSection,
   SubscriptionSection,
+  BuilderSection,
   ConnectorsSection,
   MemoriesSection,
   UploadsSection,
@@ -16,6 +17,7 @@ import {
   Analytics01Icon,
   Settings02Icon,
   Crown02Icon,
+  Rocket01Icon,
   ConnectIcon,
   Brain02Icon,
   Attachment01Icon,
@@ -55,6 +57,7 @@ function SettingsContent() {
     { value: 'usage', label: 'Usage', icon: Analytics01Icon },
     { value: 'subscription', label: 'Subscription', icon: Crown02Icon },
     { value: 'preferences', label: 'Preferences', icon: Settings02Icon },
+    { value: 'builder', label: 'Builder', icon: Rocket01Icon },
     { value: 'connectors', label: 'Connectors', icon: ConnectIcon },
     { value: 'memories', label: 'Memories', icon: Brain02Icon },
     { value: 'uploads', label: 'Uploads', icon: Attachment01Icon },
@@ -308,12 +311,32 @@ function SettingsContent() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-pixel-grid text-xs text-muted-foreground/30">04</span>
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">05</span>
                       <h2 className="text-lg font-semibold">Connectors</h2>
                     </div>
                     <p className="text-sm text-muted-foreground">Connect your external services and data sources</p>
                   </div>
                   <ConnectorsSection user={user} />
+                </div>
+              </TabsContent>
+
+              <TabsContent value="builder" className="m-0">
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">04</span>
+                      <h2 className="text-lg font-semibold">Builder</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Configure your models, context, and integrations from one builder workspace
+                    </p>
+                  </div>
+                  <BuilderSection
+                    user={user}
+                    isProUser={isProUser}
+                    isCustomInstructionsEnabled={isCustomInstructionsEnabled}
+                    setIsCustomInstructionsEnabledAction={setIsCustomInstructionsEnabled}
+                  />
                 </div>
               </TabsContent>
 
