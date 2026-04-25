@@ -1,339 +1,1175 @@
-import Image from 'next/image';
-import Link from 'next/link';
+'use client';
+
+import { useEffect, useState } from 'react';
 import {
-  ArrowUpRight,
-  Blocks,
-  BrainCircuit,
+  AppWindow,
   Cable,
-  Code2,
-  Compass,
-  FileStack,
-  Orbit,
+  ChevronDown,
+  ChevronRight,
+  FileArchive,
+  FileText,
+  FolderOpen,
+  FolderPlus,
+  GitBranch,
+  Globe,
+  HardDrive,
+  KeyRound,
+  Layers3,
+  Lock,
   Radar,
-  Rocket,
+  Server,
   Settings2,
-  Sparkles,
-  WandSparkles,
+  Shapes,
+  Terminal,
+  Upload,
 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
 import { SciraLogo } from '@/components/logos/scira-logo';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Orb } from '@/components/ui/orb';
+import { signIn, useSession } from '@/lib/auth-client';
+import { cn } from '@/lib/utils';
 
-const builderLoop = [
-  {
-    title: 'Observe',
-    description: 'Read the page, pull signals from the web, and collect the context that should steer the next move.',
-    icon: Radar,
-  },
-  {
-    title: 'Route',
-    description: 'Pick the right model, search provider, and automation path for the job instead of forcing one default.',
-    icon: Orbit,
-  },
-  {
-    title: 'Ship',
-    description: 'Connect tools, apply changes, and keep the workspace stateful so your next iteration starts ahead.',
-    icon: Rocket,
-  },
-];
+type BuilderMode = 'local' | 'web' | 'ssh';
+type SshAuthMode = 'config' | 'key' | 'password';
+type BuilderSubView = 'default' | 'git' | 'zip';
+type GitHubRepo = {
+  id: number;
+  name: string;
+  fullName: string;
+  htmlUrl: string;
+  cloneUrl: string;
+  private: boolean;
+  defaultBranch: string;
+};
+type ZipTreeNode = {
+  name: string;
+  path: string;
+  type: 'file' | 'folder';
+  children?: ZipTreeNode[];
+};
 
-const workspaceSurfaces = [
-  {
-    eyebrow: 'Models',
-    title: 'Shape how the AI builder thinks',
+const SECTIONS = {
+  local: {
+    badge: 'Local section',
+    title: 'Local Builder',
     description:
-      'Builder settings now group your general controls, models and providers, context, and integrations into a single operational workspace.',
-    image: '/vercel-featured.png',
-    imageAlt: 'Indexblue builder workspace preview',
+      'Use local workspace context inside Indexblue. Open files, builder settings, and saved memories to build from your own environment first.',
+    features: [
+      { icon: FolderOpen, label: 'Uploads and local files' },
+      { icon: Settings2, label: 'Builder settings and prompts' },
+      { icon: Layers3, label: 'Saved memories and context' },
+    ],
+    colors: ['#6B5B4F', '#8B7355'] as [string, string],
   },
-  {
-    eyebrow: 'Context',
-    title: 'Keep files, memories, and prompts in the same loop',
+  web: {
+    badge: 'Web section',
+    title: 'Web Builder',
     description:
-      'Use stored memories, uploaded files, and custom instructions as durable builder context instead of re-explaining your workspace every time.',
-    image: '/lookout-promo.png',
-    imageAlt: 'Indexblue context and automation preview',
+      'Use web-connected builder tools for live browsing, online research, and connected integrations when the task depends on fresh data.',
+    features: [
+      { icon: Globe, label: 'Live web exploration' },
+      { icon: Radar, label: 'Real-time search signals' },
+      { icon: Cable, label: 'Connected web integrations' },
+    ],
+    colors: ['#5B6478', '#8AA4D6'] as [string, string],
   },
-];
-
-const controlPlanes = [
+  ssh: {
+    badge: 'SSH section',
+    title: 'SSH Builder',
+    description:
+      'Use SSH-connected builder access to work against remote machines, inspect services, and operate inside server environments when the task lives off-device.',
+    features: [
+      { icon: Server, label: 'Remote server access' },
+      { icon: Terminal, label: 'Command-line workflows' },
+      { icon: Cable, label: 'Secure infrastructure connections' },
+    ],
+    colors: ['#4F6B64', '#73A697'] as [string, string],
+  },
+} satisfies Record<
+  BuilderMode,
   {
-    title: 'General',
-    description: 'Theme, custom instructions, location metadata, and chat-open behavior.',
-    icon: Settings2,
-  },
-  {
-    title: 'Models & Providers',
-    description: 'Search provider, extreme model, auto router, preferred models, and mode ordering.',
-    icon: BrainCircuit,
-  },
-  {
-    title: 'Skills & Context',
-    description: 'Memories, uploads, and reusable guidance that keep the builder grounded.',
-    icon: FileStack,
-  },
-  {
-    title: 'Plugins & Integrations',
-    description: 'Connectors, MCP servers, and external systems that expand what Builder can act on.',
-    icon: Cable,
-  },
-];
-
-const productHighlights = [
-  {
-    title: 'Built for the web',
-    description: 'A workspace that feels closer to a live product cockpit than a plain configuration page.',
-    icon: Compass,
-  },
-  {
-    title: 'AI that adapts',
-    description: 'Model routing, preferred model curation, and provider selection help Builder fit the task at hand.',
-    icon: WandSparkles,
-  },
-  {
-    title: 'Context that sticks',
-    description: 'Memories, uploads, instructions, and integrations give the agent continuity across sessions.',
-    icon: Blocks,
-  },
-];
+    badge: string;
+    title: string;
+    description: string;
+    features: Array<{ icon: typeof HardDrive; label: string }>;
+    colors: [string, string];
+  }
+>;
 
 export default function BuilderPage() {
+  const [mode, setMode] = useState<BuilderMode | null>(null);
+  const [sshAuthMode, setSshAuthMode] = useState<SshAuthMode>('config');
+  const [subView, setSubView] = useState<BuilderSubView>('default');
+  const [repoUrl, setRepoUrl] = useState('');
+  const [githubRepos, setGitHubRepos] = useState<GitHubRepo[]>([]);
+  const [selectedRepoId, setSelectedRepoId] = useState<number | null>(null);
+  const [githubConnected, setGitHubConnected] = useState(false);
+  const [isLoadingRepos, setIsLoadingRepos] = useState(false);
+  const [repoLoadError, setRepoLoadError] = useState<string | null>(null);
+  const [cloneLogs, setCloneLogs] = useState<string[]>([]);
+  const [cloneTargetDir, setCloneTargetDir] = useState<string | null>(null);
+  const [cloneError, setCloneError] = useState<string | null>(null);
+  const [isCloning, setIsCloning] = useState(false);
+  const [zipFile, setZipFile] = useState<File | null>(null);
+  const [zipImportError, setZipImportError] = useState<string | null>(null);
+  const [zipExtractedPath, setZipExtractedPath] = useState<string | null>(null);
+  const [zipArchiveName, setZipArchiveName] = useState<string | null>(null);
+  const [zipTree, setZipTree] = useState<ZipTreeNode[]>([]);
+  const [isImportingZip, setIsImportingZip] = useState(false);
+  const [expandedZipFolders, setExpandedZipFolders] = useState<Record<string, boolean>>({});
+  const [selectedZipFile, setSelectedZipFile] = useState<string | null>(null);
+  const [selectedZipFileContent, setSelectedZipFileContent] = useState<string>('');
+  const [isLoadingZipFile, setIsLoadingZipFile] = useState(false);
+  const [isZipPreviewOpen, setIsZipPreviewOpen] = useState(false);
+  const { data: session } = useSession();
+  const activeSection = mode ? SECTIONS[mode] : null;
+
+  const openGitCloneCard = () => {
+    setSubView('git');
+    setCloneLogs([]);
+    setCloneError(null);
+    setCloneTargetDir(null);
+    setRepoLoadError(null);
+  };
+
+  const closeGitCloneCard = () => {
+    setSubView('default');
+    setCloneError(null);
+  };
+
+  const openZipImportCard = () => {
+    setSubView('zip');
+    setZipImportError(null);
+    setZipExtractedPath(null);
+    setZipArchiveName(null);
+    setZipTree([]);
+    setExpandedZipFolders({});
+    setSelectedZipFile(null);
+    setSelectedZipFileContent('');
+    setIsZipPreviewOpen(false);
+  };
+
+  const closeZipImportCard = () => {
+    setSubView('default');
+    setZipImportError(null);
+  };
+
+  useEffect(() => {
+    const shouldLoadRepos = subView === 'git' && (mode === 'local' || mode === 'web') && !!session?.user;
+    if (!shouldLoadRepos) return;
+
+    let ignore = false;
+
+    const loadRepos = async () => {
+      setIsLoadingRepos(true);
+      setRepoLoadError(null);
+
+      try {
+        const response = await fetch('/api/builder/github/repos', { cache: 'no-store' });
+        const payload = await response.json();
+
+        if (!response.ok) {
+          throw new Error(payload?.error ?? 'Failed to load GitHub repos.');
+        }
+
+        if (ignore) return;
+        setGitHubConnected(Boolean(payload.connected));
+        setGitHubRepos(payload.repos ?? []);
+        setSelectedRepoId(payload.selectedRepoId ? Number(payload.selectedRepoId) : null);
+      } catch (error) {
+        if (ignore) return;
+        setRepoLoadError(error instanceof Error ? error.message : 'Failed to load GitHub repos.');
+        setGitHubConnected(false);
+      } finally {
+        if (!ignore) setIsLoadingRepos(false);
+      }
+    };
+
+    void loadRepos();
+
+    return () => {
+      ignore = true;
+    };
+  }, [mode, session?.user, subView]);
+
+  useEffect(() => {
+    const selectedRepo = githubRepos.find((repo) => repo.id === selectedRepoId);
+    if (selectedRepo) {
+      setRepoUrl(selectedRepo.cloneUrl);
+    }
+  }, [githubRepos, selectedRepoId]);
+
+  const handleSelectRepo = async (repo: GitHubRepo) => {
+    setSelectedRepoId(repo.id);
+    setRepoUrl(repo.cloneUrl);
+    setRepoLoadError(null);
+
+    try {
+      const response = await fetch('/api/builder/github/select', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          repoId: String(repo.id),
+          repoName: repo.name,
+          repoFullName: repo.fullName,
+          repoUrl: repo.htmlUrl,
+          cloneUrl: repo.cloneUrl,
+          isPrivate: repo.private,
+          defaultBranch: repo.defaultBranch,
+        }),
+      });
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? 'Failed to save selected repository.');
+      }
+    } catch (error) {
+      setRepoLoadError(error instanceof Error ? error.message : 'Failed to save selected repository.');
+    }
+  };
+
+  const handleCloneRepository = async () => {
+    if (!repoUrl.trim()) {
+      setCloneError('Repository URL is required.');
+      return;
+    }
+
+    setIsCloning(true);
+    setCloneError(null);
+    setCloneTargetDir(null);
+    setCloneLogs(['Starting clone request...']);
+
+    try {
+      const response = await fetch('/api/builder/git/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode,
+          repoUrl: repoUrl.trim(),
+          authMode: 'public',
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? 'Clone request failed.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as { type: string; message?: string; targetDir?: string };
+
+          if (event.message) {
+            setCloneLogs((current) => [...current, event.message!]);
+          }
+
+          if (event.type === 'done') {
+            setCloneTargetDir(event.targetDir ?? null);
+          }
+
+          if (event.type === 'error') {
+            setCloneError(event.message ?? 'Clone failed.');
+          }
+        }
+      }
+    } catch (error) {
+      setCloneError(error instanceof Error ? error.message : 'Clone failed.');
+    } finally {
+      setIsCloning(false);
+    }
+  };
+
+  const handleZipImport = async () => {
+    if (!zipFile) {
+      setZipImportError('ZIP file is required.');
+      return;
+    }
+
+    setIsImportingZip(true);
+    setZipImportError(null);
+    setZipExtractedPath(null);
+    setZipArchiveName(null);
+    setZipTree([]);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', zipFile);
+
+      const response = await fetch('/api/builder/zip/import', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Failed to import ZIP archive.');
+      }
+
+      setZipExtractedPath(payload.extractedPath ?? null);
+      setZipArchiveName(payload.archiveName ?? null);
+      setZipTree(payload.tree ?? []);
+      setExpandedZipFolders({});
+      setSelectedZipFile(null);
+      setSelectedZipFileContent('');
+      setIsZipPreviewOpen(true);
+    } catch (error) {
+      setZipImportError(error instanceof Error ? error.message : 'Failed to import ZIP archive.');
+    } finally {
+      setIsImportingZip(false);
+    }
+  };
+
+  const handleToggleZipFolder = (folderPath: string) => {
+    setExpandedZipFolders((current) => ({
+      ...current,
+      [folderPath]: !current[folderPath],
+    }));
+  };
+
+  const handleSelectZipFile = async (relativePath: string) => {
+    if (!zipExtractedPath) return;
+
+    setSelectedZipFile(relativePath);
+    setSelectedZipFileContent('');
+    setIsLoadingZipFile(true);
+    setZipImportError(null);
+
+    try {
+      const params = new URLSearchParams({
+        extractedPath: zipExtractedPath,
+        relativePath,
+      });
+      const response = await fetch(`/api/builder/zip/file?${params.toString()}`);
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Failed to load file preview.');
+      }
+
+      setSelectedZipFileContent(payload.content ?? '');
+    } catch (error) {
+      setZipImportError(error instanceof Error ? error.message : 'Failed to load file preview.');
+    } finally {
+      setIsLoadingZipFile(false);
+    }
+  };
+
   return (
-    <main className="min-h-screen bg-background">
-      <section className="relative overflow-hidden border-b border-border/50">
-        <div className="absolute inset-0">
-          <Image
-            src="/og-bg.png"
-            alt=""
-            fill
-            priority
-            className="object-cover opacity-20 dark:opacity-25"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-background/80 to-background" />
+    <div className="relative flex h-dvh w-full flex-col items-center overflow-hidden bg-background">
+      <div className="relative z-10 flex min-h-0 w-full max-w-lg flex-1 flex-col items-center p-4 safe-area-inset-bottom sm:p-6">
+        <header className="flex w-full shrink-0 items-center pt-2 sm:pt-4">
+          <div className="flex items-center gap-2">
+            <SciraLogo className="size-7 shrink-0 sm:size-8" />
+            <h1 className="font-pixel text-base tracking-wider text-foreground sm:text-2xl">Builder</h1>
+          </div>
+        </header>
+
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+          <div className="pointer-events-none relative size-[260px] opacity-30 sm:size-[300px]">
+            <Orb
+              colors={activeSection?.colors ?? ['#6B5B4F', '#8AA4D6']}
+              agentState={null}
+              volumeMode="auto"
+              inputVolumeRef={{ current: 0 }}
+              outputVolumeRef={{ current: 0 }}
+              className="h-full w-full"
+            />
+          </div>
         </div>
 
-        <div className="relative mx-auto flex w-full max-w-7xl flex-col gap-10 px-6 py-10 sm:px-8 lg:py-14">
-          <div className="flex flex-col gap-8 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(320px,0.95fr)] lg:items-center">
-            <div className="space-y-6">
-              <div className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/70 px-3 py-1.5 text-xs text-muted-foreground backdrop-blur">
-                <SciraLogo className="size-4" />
-                <span className="font-pixel text-[10px] uppercase tracking-[0.16em]">Indexblue Builder</span>
-              </div>
-
-              <div className="space-y-4">
-                <h1 className="max-w-3xl text-4xl font-light tracking-tight text-foreground sm:text-5xl">
-                  The builder workspace for models, context, and web-native AI flow
-                </h1>
-                <p className="max-w-2xl text-base leading-7 text-muted-foreground sm:text-lg">
-                  Inspired by the way Stagewise blends an operational settings shell with a product-grade workspace,
-                  Builder now acts as the control plane for how Indexblue sees, routes, remembers, and integrates.
+        <div className="flex w-full shrink-0 flex-col gap-3 pb-2 sm:pb-0">
+          {!mode && (
+            <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
+              <div className="flex flex-col gap-1">
+                <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
+                  <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">Builder modes</span>
+                </div>
+                <p className="text-sm font-medium text-foreground">Choose how you want to start</p>
+                <p className="text-xs leading-relaxed text-muted-foreground/70">
+                  Pick a builder mode and we will open only that context in the center.
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
-                <Button asChild size="lg" className="gap-2">
-                  <Link href="/settings?tab=builder">
-                    Open Builder Settings
-                    <ArrowUpRight className="size-4" />
-                  </Link>
-                </Button>
-                <Button asChild size="lg" variant="outline" className="gap-2">
-                  <Link href="/apps">
-                    Browse Integrations
-                    <Cable className="size-4" />
-                  </Link>
-                </Button>
-                <Button asChild size="lg" variant="ghost" className="gap-2">
-                  <Link href="/lookout">
-                    Launch Lookout
-                    <Sparkles className="size-4" />
-                  </Link>
-                </Button>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-3">
-                {productHighlights.map((item) => (
-                  <div key={item.title} className="rounded-2xl border border-border/60 bg-background/70 p-4 backdrop-blur">
-                    <div className="mb-3 flex size-10 items-center justify-center rounded-xl border border-border/60 bg-accent/40">
-                      <item.icon className="size-4" />
-                    </div>
-                    <h2 className="text-sm font-semibold text-foreground">{item.title}</h2>
-                    <p className="mt-1 text-sm leading-6 text-muted-foreground">{item.description}</p>
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={() => setMode('local')}
+                  onClickCapture={() => setSubView('default')}
+                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
+                >
+                  <HardDrive className="size-4" />
+                  Local
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('web')}
+                  onClickCapture={() => setSubView('default')}
+                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
+                >
+                  <AppWindow className="size-4" />
+                  Web
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode('ssh')}
+                  onClickCapture={() => setSubView('default')}
+                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
+                >
+                  <Terminal className="size-4" />
+                  SSH
+                </button>
               </div>
             </div>
+          )}
 
-            <div className="relative">
-              <div className="absolute inset-0 rounded-[28px] bg-gradient-to-br from-primary/10 via-transparent to-secondary/10 blur-3xl" />
-              <div className="relative overflow-hidden rounded-[28px] border border-border/60 bg-background/85 shadow-[0_20px_80px_rgba(0,0,0,0.12)] backdrop-blur">
-                <div className="flex items-center justify-between border-b border-border/50 px-5 py-4">
-                  <div>
-                    <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                      Live Workspace
+          {mode && activeSection && (
+            <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
+              {!(mode === 'local' && (subView === 'git' || subView === 'zip')) &&
+                !(mode === 'web' && (subView === 'git' || subView === 'zip')) &&
+                !(mode === 'ssh' && subView === 'zip') && (
+                <>
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-col gap-1">
+                      <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
+                        <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
+                          {activeSection.badge}
+                        </span>
+                      </div>
+                      <p className="text-sm font-medium text-foreground">{activeSection.title}</p>
+                      <p className="text-xs leading-relaxed text-muted-foreground/70">{activeSection.description}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode(null);
+                        setSubView('default');
+                      }}
+                      className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                    >
+                      Back
+                    </button>
+                  </div>
+
+                  <div className="flex flex-col gap-1.5">
+                    {activeSection.features.map(({ icon: Icon, label }) => (
+                      <div key={label} className="flex items-center gap-2.5">
+                        <div className="flex size-6 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10">
+                          <Icon className="size-3.5 text-primary" aria-hidden />
+                        </div>
+                        <span className="text-xs text-foreground/70">{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {mode === 'local' && (
+                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
+                  {subView === 'default' && (
+                    <>
+                      <div className="flex flex-col gap-1">
+                        <p className="text-xs font-medium text-foreground">Local workspace actions</p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                          Start from a folder on this machine, clone an existing repository, or create a new workspace.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                        <button
+                          type="button"
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <FolderOpen className="size-3.5" />
+                          Open Folder
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openGitCloneCard}
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <GitBranch className="size-3.5" />
+                          Clone Git Repo
+                        </button>
+                        <button
+                          type="button"
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <FolderPlus className="size-3.5" />
+                          Create Folder
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openZipImportCard}
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <FileArchive className="size-3.5" />
+                          Import ZIP
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {subView === 'git' && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
+                            <GitBranch className="size-4 text-foreground" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
+                            <p className="text-[11px] text-muted-foreground/70">Enter the repository URL and choose auth.</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={closeGitCloneCard}
+                          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          Back
+                        </button>
+                      </div>
+
+                      {(!session?.user || !githubConnected) && (
+                        <button
+                          type="button"
+                          onClick={() => signIn.social({ provider: 'github', callbackURL: '/builder' })}
+                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                        >
+                          <GitBranch className="size-3.5" />
+                          Connect GitHub
+                        </button>
+                      )}
+
+                      {session?.user && githubConnected && (
+                        <>
+                          <p className="text-[11px] text-muted-foreground/80">Select a connected GitHub repository.</p>
+                          {isLoadingRepos && <p className="text-[11px] text-muted-foreground/80">Loading repositories...</p>}
+                          {repoLoadError && <p className="text-[11px] text-red-400">{repoLoadError}</p>}
+                          {githubRepos.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
+                              {githubRepos.map((repo) => (
+                                <button
+                                  key={repo.id}
+                                  type="button"
+                                  onClick={() => void handleSelectRepo(repo)}
+                                  className={cn(
+                                    'mb-2 flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors last:mb-0',
+                                    selectedRepoId === repo.id
+                                      ? 'border-primary/30 bg-primary/15 text-foreground'
+                                      : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
+                                  )}
+                                >
+                                  <span>{repo.fullName}</span>
+                                  <span>{repo.private ? 'Private' : 'Public'}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-muted-foreground/80">Repository URL</span>
+                        <input
+                          type="text"
+                          placeholder="https://github.com/user/repo.git"
+                          value={repoUrl}
+                          onChange={(event) => setRepoUrl(event.target.value)}
+                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                        />
+                      </label>
+
+                      {cloneError && <p className="text-[11px] text-red-400">{cloneError}</p>}
+
+                      {cloneTargetDir && (
+                        <p className="text-[11px] text-emerald-400">Cloned into: {cloneTargetDir}</p>
+                      )}
+
+                      {cloneLogs.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
+                          {cloneLogs.map((log, index) => (
+                            <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
+                              {log}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleCloneRepository}
+                        disabled={isCloning || !repoUrl}
+                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                      >
+                        <GitBranch className="size-3.5" />
+                        {isCloning ? 'Cloning...' : 'Clone Repository'}
+                      </button>
+                    </div>
+                  )}
+
+                  {subView === 'zip' && <ZipImportCard
+                    zipFile={zipFile}
+                    setZipFile={setZipFile}
+                    zipImportError={zipImportError}
+                    zipArchiveName={zipArchiveName}
+                    zipExtractedPath={zipExtractedPath}
+                    zipTree={zipTree}
+                    isImportingZip={isImportingZip}
+                    onImport={handleZipImport}
+                    onBack={closeZipImportCard}
+                    onOpenPreview={() => setIsZipPreviewOpen(true)}
+                  />}
+                </div>
+              )}
+
+              {mode === 'web' && (
+                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
+                  {subView === 'default' && (
+                    <>
+                      <div className="flex flex-col gap-1">
+                        <p className="text-xs font-medium text-foreground">Web builder actions</p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                          Pull in a repository, start from a template, or import a zipped project to continue building online.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <button
+                          type="button"
+                          onClick={openGitCloneCard}
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <GitBranch className="size-3.5" />
+                          Clone Git Repo
+                        </button>
+                        <button
+                          type="button"
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <Shapes className="size-3.5" />
+                          Templates
+                        </button>
+                        <button
+                          type="button"
+                          onClick={openZipImportCard}
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <FileArchive className="size-3.5" />
+                          Import ZIP
+                        </button>
+                      </div>
+                    </>
+                  )}
+
+                  {subView === 'git' && (
+                    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
+                            <GitBranch className="size-4 text-foreground" />
+                          </div>
+                          <div>
+                            <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
+                            <p className="text-[11px] text-muted-foreground/70">Use a repository URL with optional auth details.</p>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={closeGitCloneCard}
+                          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          Back
+                        </button>
+                      </div>
+
+                      {(!session?.user || !githubConnected) && (
+                        <button
+                          type="button"
+                          onClick={() => signIn.social({ provider: 'github', callbackURL: '/builder' })}
+                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                        >
+                          <GitBranch className="size-3.5" />
+                          Connect GitHub
+                        </button>
+                      )}
+
+                      {session?.user && githubConnected && (
+                        <>
+                          <p className="text-[11px] text-muted-foreground/80">Select a connected GitHub repository.</p>
+                          {isLoadingRepos && <p className="text-[11px] text-muted-foreground/80">Loading repositories...</p>}
+                          {repoLoadError && <p className="text-[11px] text-red-400">{repoLoadError}</p>}
+                          {githubRepos.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
+                              {githubRepos.map((repo) => (
+                                <button
+                                  key={repo.id}
+                                  type="button"
+                                  onClick={() => void handleSelectRepo(repo)}
+                                  className={cn(
+                                    'mb-2 flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors last:mb-0',
+                                    selectedRepoId === repo.id
+                                      ? 'border-primary/30 bg-primary/15 text-foreground'
+                                      : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
+                                  )}
+                                >
+                                  <span>{repo.fullName}</span>
+                                  <span>{repo.private ? 'Private' : 'Public'}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      )}
+
+                      <label className="flex flex-col gap-1">
+                        <span className="text-[11px] text-muted-foreground/80">Repository URL</span>
+                        <input
+                          type="text"
+                          placeholder="https://github.com/user/repo.git"
+                          value={repoUrl}
+                          onChange={(event) => setRepoUrl(event.target.value)}
+                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                        />
+                      </label>
+
+                      {cloneError && <p className="text-[11px] text-red-400">{cloneError}</p>}
+
+                      {cloneTargetDir && (
+                        <p className="text-[11px] text-emerald-400">Cloned into: {cloneTargetDir}</p>
+                      )}
+
+                      {cloneLogs.length > 0 && (
+                        <div className="max-h-36 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
+                          {cloneLogs.map((log, index) => (
+                            <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
+                              {log}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={handleCloneRepository}
+                        disabled={isCloning || !repoUrl}
+                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                      >
+                        <GitBranch className="size-3.5" />
+                        {isCloning ? 'Cloning...' : 'Clone Repository'}
+                      </button>
+                    </div>
+                  )}
+
+                  {subView === 'zip' && <ZipImportCard
+                    zipFile={zipFile}
+                    setZipFile={setZipFile}
+                    zipImportError={zipImportError}
+                    zipArchiveName={zipArchiveName}
+                    zipExtractedPath={zipExtractedPath}
+                    zipTree={zipTree}
+                    isImportingZip={isImportingZip}
+                    onImport={handleZipImport}
+                    onBack={closeZipImportCard}
+                    onOpenPreview={() => setIsZipPreviewOpen(true)}
+                  />}
+                </div>
+              )}
+
+              {mode === 'ssh' && (
+                <div className="max-h-[52vh] overflow-y-auto rounded-xl border border-border/50 bg-background/50 p-3 pr-2">
+                  <div className="flex flex-col gap-3">
+                  {subView === 'default' && (
+                    <button
+                      type="button"
+                      onClick={openZipImportCard}
+                      className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                    >
+                      <FileArchive className="size-3.5" />
+                      Import ZIP
+                    </button>
+                  )}
+                  {subView === 'zip' && <ZipImportCard
+                    zipFile={zipFile}
+                    setZipFile={setZipFile}
+                    zipImportError={zipImportError}
+                    zipArchiveName={zipArchiveName}
+                    zipExtractedPath={zipExtractedPath}
+                    zipTree={zipTree}
+                    isImportingZip={isImportingZip}
+                    onImport={handleZipImport}
+                    onBack={closeZipImportCard}
+                    onOpenPreview={() => setIsZipPreviewOpen(true)}
+                  />}
+                  {subView === 'default' && (
+                    <>
+                  <div className="flex flex-col gap-1">
+                    <p className="text-xs font-medium text-foreground">SSH connection</p>
+                    <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                      Enter your remote machine details, then choose whether to authenticate with an SSH config file, a private
+                      key, or a password.
                     </p>
-                    <h2 className="mt-1 text-base font-semibold">Builder control plane</h2>
-                  </div>
-                  <div className="inline-flex items-center gap-2 rounded-full border border-border/50 px-3 py-1 text-xs text-muted-foreground">
-                    <WandSparkles className="size-3.5" />
-                    AI active
-                  </div>
-                </div>
-
-                <div className="grid gap-4 p-5">
-                  <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/30">
-                    <Image
-                      src="/vercel-featured.png"
-                      alt="Builder workspace preview"
-                      width={1200}
-                      height={720}
-                      className="h-auto w-full object-cover"
-                      priority
-                    />
                   </div>
 
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="rounded-2xl border border-border/60 bg-card/30 p-4">
-                      <div className="mb-3 flex items-center gap-2 text-foreground">
-                        <Code2 className="size-4" />
-                        <h3 className="text-sm font-semibold">Model routing</h3>
-                      </div>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        Switch providers, choose preferred models, and tune auto-router behavior from one place.
-                      </p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-muted-foreground/80">Host</span>
+                      <input
+                        type="text"
+                        placeholder="example.server.com"
+                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1">
+                      <span className="text-[11px] text-muted-foreground/80">Port</span>
+                      <input
+                        type="text"
+                        placeholder="22"
+                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                      />
+                    </label>
+                    <label className="flex flex-col gap-1 sm:col-span-2">
+                      <span className="text-[11px] text-muted-foreground/80">Username</span>
+                      <input
+                        type="text"
+                        placeholder="ubuntu"
+                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                      />
+                    </label>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <button
+                        type="button"
+                        onClick={() => setSshAuthMode('config')}
+                        className={cn(
+                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
+                          sshAuthMode === 'config'
+                            ? 'border-primary/30 bg-primary/15 text-foreground'
+                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                        )}
+                      >
+                        <Upload className="size-3.5" />
+                        Config File
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSshAuthMode('key')}
+                        className={cn(
+                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
+                          sshAuthMode === 'key'
+                            ? 'border-primary/30 bg-primary/15 text-foreground'
+                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                        )}
+                      >
+                        <KeyRound className="size-3.5" />
+                        Private Key
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSshAuthMode('password')}
+                        className={cn(
+                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
+                          sshAuthMode === 'password'
+                            ? 'border-primary/30 bg-primary/15 text-foreground'
+                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                        )}
+                      >
+                        <Lock className="size-3.5" />
+                        Password
+                      </button>
                     </div>
-                    <div className="rounded-2xl border border-border/60 bg-card/30 p-4">
-                      <div className="mb-3 flex items-center gap-2 text-foreground">
-                        <Cable className="size-4" />
-                        <h3 className="text-sm font-semibold">Integrations</h3>
-                      </div>
-                      <p className="text-sm leading-6 text-muted-foreground">
-                        Connect MCP servers and third-party services so Builder can act across your real stack.
-                      </p>
+                  </div>
+
+                  {sshAuthMode === 'config' && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                      <p className="text-[11px] text-muted-foreground/80">Upload or choose your SSH config file.</p>
+                      <button
+                        type="button"
+                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                      >
+                        <Upload className="size-3.5" />
+                        Add Config File
+                      </button>
                     </div>
+                  )}
+
+                  {sshAuthMode === 'key' && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                      <p className="text-[11px] text-muted-foreground/80">Attach a private key file or paste the key contents.</p>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        <button
+                          type="button"
+                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                        >
+                          <KeyRound className="size-3.5" />
+                          Add Key File
+                        </button>
+                        <input
+                          type="password"
+                          placeholder="Optional passphrase"
+                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {sshAuthMode === 'password' && (
+                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                      <p className="text-[11px] text-muted-foreground/80">Enter the server password used for the SSH session.</p>
+                      <input
+                        type="password"
+                        placeholder="SSH password"
+                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                      />
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    className="flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+                  >
+                    <Server className="size-3.5" />
+                    Connect with SSH
+                  </button>
+                  </>
+                  )}
                   </div>
                 </div>
-              </div>
+              )}
             </div>
-          </div>
+          )}
         </div>
-      </section>
-
-      <section className="mx-auto w-full max-w-7xl px-6 py-10 sm:px-8 lg:py-14">
-        <div className="mb-8 max-w-2xl">
-          <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">How it works</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            A tighter loop between what you see, what the AI decides, and what it can do
-          </h2>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-3">
-          {builderLoop.map((item, index) => (
-            <div key={item.title} className="rounded-2xl border border-border/60 bg-card/20 p-5">
-              <div className="mb-4 flex items-center justify-between">
-                <div className="flex size-11 items-center justify-center rounded-xl border border-border/60 bg-accent/40">
-                  <item.icon className="size-5" />
-                </div>
-                <span className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/50">
-                  0{index + 1}
-                </span>
-              </div>
-              <h3 className="text-lg font-semibold text-foreground">{item.title}</h3>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto w-full max-w-7xl px-6 py-4 sm:px-8 lg:py-6">
-        <div className="flex flex-col gap-6">
-          {workspaceSurfaces.map((surface, index) => (
-            <div
-              key={surface.title}
-              className="grid gap-6 rounded-[28px] border border-border/60 bg-card/20 p-5 sm:p-6 lg:grid-cols-[minmax(0,0.9fr)_minmax(320px,1.1fr)] lg:items-center"
-            >
-              <div className={index % 2 === 1 ? 'lg:order-2' : ''}>
-                <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                  {surface.eyebrow}
-                </p>
-                <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">{surface.title}</h2>
-                <p className="mt-3 max-w-xl text-sm leading-7 text-muted-foreground">{surface.description}</p>
-                <div className="mt-5">
-                  <Button asChild variant="outline" className="gap-2">
-                    <Link href={index === 0 ? '/settings?tab=builder' : '/settings?tab=uploads'}>
-                      {index === 0 ? 'Open Builder controls' : 'Open context surfaces'}
-                      <ArrowUpRight className="size-4" />
-                    </Link>
-                  </Button>
+      </div>
+      <Dialog open={isZipPreviewOpen} onOpenChange={setIsZipPreviewOpen}>
+        <DialogContent className="!h-[92vh] !w-[98vw] !max-w-[1820px] overflow-hidden rounded-[40px] border border-border/60 bg-background/96 p-0 shadow-[0_40px_140px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:rounded-[44px]">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_24%),radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_24%)] pointer-events-none" />
+          <DialogHeader className="relative border-b border-border/60 bg-card/70 px-5 py-4 sm:px-8 sm:py-5">
+            <DialogTitle className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">Extracted Files</DialogTitle>
+          </DialogHeader>
+          <div className="relative grid h-[calc(92vh-69px)] gap-0 md:grid-cols-[minmax(340px,0.78fr)_minmax(0,1.22fr)]">
+            <div className="border-b border-border/60 bg-card/35 p-4 sm:p-5 md:border-r md:border-b-0 md:p-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <div className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
+                  <p className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-foreground/80 sm:text-xs">{zipArchiveName || 'ZIP Import'}</p>
                 </div>
               </div>
-
-              <div className={index % 2 === 1 ? 'lg:order-1' : ''}>
-                <div className="overflow-hidden rounded-2xl border border-border/60 bg-background/70">
-                  <Image
-                    src={surface.image}
-                    alt={surface.imageAlt}
-                    width={1400}
-                    height={900}
-                    className="h-auto w-full object-cover"
+              <div className="h-[36vh] overflow-y-auto rounded-[24px] border border-border/60 bg-background/80 p-3 shadow-inner scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent sm:h-[38vh] sm:rounded-[28px] sm:p-4 md:h-[calc(92vh-9.5rem)]">
+                {zipTree.length > 0 ? (
+                  <ZipTree
+                    nodes={zipTree}
+                    depth={0}
+                    expandedFolders={expandedZipFolders}
+                    selectedFile={selectedZipFile}
+                    onToggleFolder={handleToggleZipFolder}
+                    onSelectFile={handleSelectZipFile}
                   />
-                </div>
+                ) : (
+                  <div className="flex h-full items-center justify-center rounded-[18px] border border-dashed border-border/50 bg-card/30">
+                    <p className="text-[11px] text-muted-foreground">Import a ZIP file to view its structure.</p>
+                  </div>
+                )}
               </div>
             </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="mx-auto w-full max-w-7xl px-6 py-10 sm:px-8 lg:py-14">
-        <div className="mb-8 max-w-2xl">
-          <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">Control Planes</p>
-          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
-            Everything the Builder tab now controls
-          </h2>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          {controlPlanes.map((item) => (
-            <div key={item.title} className="rounded-2xl border border-border/60 bg-card/20 p-5">
-              <div className="mb-4 flex size-11 items-center justify-center rounded-xl border border-border/60 bg-accent/40">
-                <item.icon className="size-5" />
+            <div className="bg-card/20 p-4 sm:p-5 md:p-6">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <p className="text-sm font-medium tracking-[0.02em] text-foreground">File Preview</p>
+                {selectedZipFile ? (
+                  <div className="max-w-[68%] rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
+                    <p className="truncate text-[11px] text-muted-foreground">{selectedZipFile}</p>
+                  </div>
+                ) : null}
               </div>
-              <h3 className="text-base font-semibold text-foreground">{item.title}</h3>
-              <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.description}</p>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-6 rounded-[28px] border border-border/60 bg-card/20 p-6 sm:p-7">
-          <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-2xl">
-              <p className="font-pixel text-[10px] uppercase tracking-[0.16em] text-muted-foreground/55">
-                Builder Settings
-              </p>
-              <h3 className="mt-2 text-2xl font-semibold tracking-tight text-foreground">
-                Open the new Stagewise-inspired settings shell inside Indexblue
-              </h3>
-              <p className="mt-3 text-sm leading-7 text-muted-foreground">
-                The Builder tab in settings now groups your AI controls into General, Models & Providers, Skills &
-                Context, and Plugins & Integrations with a denser, more operational UI.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button asChild size="lg" className="gap-2">
-                <Link href="/settings?tab=builder">
-                  Open Settings
-                  <ArrowUpRight className="size-4" />
-                </Link>
-              </Button>
-              <Button asChild size="lg" variant="outline" className="gap-2">
-                <Link href="/apps">
-                  Open Apps Catalog
-                  <Sparkles className="size-4" />
-                </Link>
-              </Button>
+              <div className="flex h-[36vh] flex-col rounded-[24px] border border-border/60 bg-background/85 p-3 shadow-inner sm:h-[38vh] sm:rounded-[28px] sm:p-4 md:h-[calc(92vh-9.5rem)]">
+                {!selectedZipFile && (
+                  <div className="flex h-full items-center justify-center rounded-[18px] border border-dashed border-border/50 bg-card/30 sm:rounded-[22px]">
+                    <div className="rounded-full border border-border/60 bg-background/80 px-4 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Select a file</p>
+                    </div>
+                  </div>
+                )}
+                {selectedZipFile && isLoadingZipFile && (
+                  <div className="flex h-full items-center justify-center rounded-[18px] border border-dashed border-border/50 bg-card/30 sm:rounded-[22px]">
+                    <div className="rounded-full border border-border/60 bg-background/80 px-4 py-2">
+                      <p className="text-[11px] uppercase tracking-[0.16em] text-muted-foreground">Loading preview</p>
+                    </div>
+                  </div>
+                )}
+                {selectedZipFile && !isLoadingZipFile && (
+                  <pre className="min-h-0 flex-1 overflow-auto rounded-[18px] border border-border/60 bg-card/50 p-4 font-mono text-[12px] leading-6 text-foreground shadow-[inset_0_1px_0_hsl(var(--background)/0.4)] scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent sm:rounded-[22px] sm:p-5">
+                    {selectedZipFileContent || 'Empty file'}
+                  </pre>
+                )}
+              </div>
             </div>
           </div>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function ZipImportCard({
+  zipFile,
+  setZipFile,
+  zipImportError,
+  zipArchiveName,
+  zipExtractedPath,
+  zipTree,
+  isImportingZip,
+  onImport,
+  onBack,
+  onOpenPreview,
+}: {
+  zipFile: File | null;
+  setZipFile: (file: File | null) => void;
+  zipImportError: string | null;
+  zipArchiveName: string | null;
+  zipExtractedPath: string | null;
+  zipTree: ZipTreeNode[];
+  isImportingZip: boolean;
+  onImport: () => void;
+  onBack: () => void;
+  onOpenPreview: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
+            <FileArchive className="size-4 text-foreground" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-foreground">Import ZIP</p>
+            <p className="text-[11px] text-muted-foreground/70">Upload a ZIP file, extract it, and inspect it in a popup.</p>
+          </div>
         </div>
-      </section>
-    </main>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
+        >
+          Back
+        </button>
+      </div>
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted-foreground/80">ZIP File</span>
+        <input
+          type="file"
+          accept=".zip,application/zip"
+          onChange={(event) => setZipFile(event.target.files?.[0] ?? null)}
+          className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1 file:text-xs file:text-foreground"
+        />
+      </label>
+
+      {zipImportError && <p className="text-[11px] text-red-400">{zipImportError}</p>}
+
+      {zipArchiveName && (
+        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+          <p className="text-[11px] text-emerald-300">Imported `{zipArchiveName}`</p>
+          <p className="mt-1 text-[11px] text-emerald-200/75">{zipExtractedPath}</p>
+        </div>
+      )}
+
+      {zipTree.length > 0 && (
+        <button
+          type="button"
+          onClick={onOpenPreview}
+          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-xs text-white transition-colors hover:bg-white/[0.08]"
+        >
+          <FolderOpen className="size-3.5" />
+          Open Extracted Files
+        </button>
+      )}
+
+      <button
+        type="button"
+        onClick={onImport}
+        disabled={isImportingZip || !zipFile}
+        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        <Upload className="size-3.5" />
+        {isImportingZip ? 'Importing ZIP...' : 'Import ZIP'}
+      </button>
+    </div>
+  );
+}
+
+function ZipTree({
+  nodes,
+  depth,
+  expandedFolders,
+  selectedFile,
+  onToggleFolder,
+  onSelectFile,
+}: {
+  nodes: ZipTreeNode[];
+  depth: number;
+  expandedFolders: Record<string, boolean>;
+  selectedFile: string | null;
+  onToggleFolder: (folderPath: string) => void;
+  onSelectFile: (filePath: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1">
+      {nodes.map((node) => (
+        <div key={node.path}>
+          {node.type === 'folder' ? (
+            <>
+              <button
+                type="button"
+                onClick={() => onToggleFolder(node.path)}
+                className="flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-[11px] text-foreground/80 transition-colors hover:bg-muted/20"
+                style={{ paddingLeft: `${depth * 14 + 4}px` }}
+              >
+                {expandedFolders[node.path] ? (
+                  <ChevronDown className="size-3 shrink-0 text-muted-foreground/70" />
+                ) : (
+                  <ChevronRight className="size-3 shrink-0 text-muted-foreground/70" />
+                )}
+                <FolderOpen className="size-3.5 shrink-0 text-primary" />
+                <span className="truncate">{node.name}</span>
+              </button>
+              {expandedFolders[node.path] && node.children?.length ? (
+                <ZipTree
+                  nodes={node.children}
+                  depth={depth + 1}
+                  expandedFolders={expandedFolders}
+                  selectedFile={selectedFile}
+                  onToggleFolder={onToggleFolder}
+                  onSelectFile={onSelectFile}
+                />
+              ) : null}
+            </>
+          ) : (
+            <button
+              type="button"
+              onClick={() => onSelectFile(node.path)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-1 py-0.5 text-[11px] transition-colors hover:bg-muted/20',
+                selectedFile === node.path ? 'bg-primary/10 text-foreground' : 'text-foreground/80',
+              )}
+              style={{ paddingLeft: `${depth * 14 + 20}px` }}
+            >
+              <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+              <span className="truncate">{node.name}</span>
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
   );
 }

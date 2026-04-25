@@ -3,13 +3,21 @@ import { dodopaymentsClient } from '@dodopayments/better-auth';
 import { polarClient } from '@polar-sh/better-auth';
 import { lastLoginMethodClient } from 'better-auth/client/plugins';
 
+function getAuthBaseURL() {
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    return window.location.origin;
+  }
+
+  return process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+}
+
 export const betterauthClient = createAuthClient({
-  baseURL: process.env.NODE_ENV === 'production' ? process.env.NEXT_PUBLIC_APP_URL : 'http://localhost:3000',
+  baseURL: getAuthBaseURL(),
   plugins: [dodopaymentsClient()],
 });
 
 export const authClient = createAuthClient({
-  baseURL: process.env.NODE_ENV === 'production' ? process.env.NEXT_PUBLIC_APP_URL : 'http://localhost:3000',
+  baseURL: getAuthBaseURL(),
   plugins: [polarClient(), lastLoginMethodClient()],
 });
 

@@ -73,6 +73,34 @@ export const account = pgTable(
   (table) => [index('account_userId_idx').on(table.userId)],
 );
 
+export const builderGithubRepoSelection = pgTable(
+  'builder_github_repo_selection',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    repoId: text('repo_id').notNull(),
+    repoName: text('repo_name').notNull(),
+    repoFullName: text('repo_full_name').notNull(),
+    repoUrl: text('repo_url').notNull(),
+    cloneUrl: text('clone_url').notNull(),
+    isPrivate: boolean('is_private').notNull().default(false),
+    defaultBranch: text('default_branch'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('builderGithubRepoSelection_userId_idx').on(table.userId),
+    uniqueIndex('builderGithubRepoSelection_userId_unique').on(table.userId),
+  ],
+);
+
 export const verification = pgTable(
   'verification',
   {

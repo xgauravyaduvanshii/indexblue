@@ -58,16 +58,7 @@ function SidebarProvider({
 
   // This is the internal state of the sidebar.
   // We use openProp and setOpenProp for control from outside the component.
-  const [_open, _setOpen] = React.useState(() => {
-    // Only read from localStorage on client side to avoid hydration mismatch
-    if (typeof window !== 'undefined') {
-      const savedState = localStorage.getItem(SIDEBAR_COOKIE_NAME);
-      if (savedState !== null) {
-        return savedState === 'true';
-      }
-    }
-    return defaultOpen;
-  });
+  const [_open, _setOpen] = React.useState(defaultOpen);
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
@@ -92,6 +83,13 @@ function SidebarProvider({
   }, [isMobile, setOpen, setOpenMobile]);
 
   // Adds a keyboard shortcut to toggle the sidebar.
+  React.useEffect(() => {
+    const savedState = window.localStorage.getItem(SIDEBAR_COOKIE_NAME);
+    if (savedState !== null) {
+      _setOpen(savedState === 'true');
+    }
+  }, []);
+
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === SIDEBAR_KEYBOARD_SHORTCUT && (event.metaKey || event.ctrlKey)) {
