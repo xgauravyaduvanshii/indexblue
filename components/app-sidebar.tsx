@@ -483,6 +483,7 @@ const groupChatsByDate = (chats: any[]) => {
 };
 
 export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarProps) => {
+  const [isHydrated, setIsHydrated] = React.useState(false);
   const [blurPersonalInfo] = useSyncedPreferences<boolean>('scira-blur-personal-info', false);
   const [isRecentCollapsed, setIsRecentCollapsed] = React.useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -494,12 +495,19 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
     }
   });
   React.useEffect(() => {
+    setIsHydrated(true);
+  }, []);
+
+  React.useEffect(() => {
     try {
       window.localStorage.setItem('scira-recent-collapsed', JSON.stringify(isRecentCollapsed));
     } catch {
       // ignore
     }
   }, [isRecentCollapsed]);
+
+  const stableUser = isHydrated ? user : null;
+  const stableIsProUser = isHydrated ? isProUser : false;
 
   const { state, isMobile, setOpenMobile } = useSidebar();
   const [keyboardShortcutsOpen, setKeyboardShortcutsOpen] = React.useState(false);
@@ -525,12 +533,12 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
 
   // Fetch recent chats - lightweight query optimized for sidebar (only id, title, createdAt, visibility)
   const { data: chatsData, isLoading: isChatsLoading } = useQuery({
-    queryKey: ['recent-chats', user?.id],
+    queryKey: ['recent-chats', stableUser?.id],
     queryFn: async () => {
-      if (!user?.id) return { chats: [], hasMore: false };
-      return await getRecentChats(user.id, 8);
+      if (!stableUser?.id) return { chats: [], hasMore: false };
+      return await getRecentChats(stableUser.id, 8);
     },
-    enabled: !!user?.id,
+    enabled: !!stableUser?.id,
     refetchOnWindowFocus: false,
     refetchOnMount: true,
     staleTime: 0,
@@ -589,8 +597,8 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
   ];
 
   const invalidateRecentChats = () => {
-    if (user?.id) {
-      queryClient.refetchQueries({ queryKey: ['recent-chats', user.id] });
+    if (stableUser?.id) {
+      queryClient.refetchQueries({ queryKey: ['recent-chats', stableUser.id] });
     }
   };
 
@@ -619,7 +627,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
         return;
       }
 
-      queryClient.setQueryData(['recent-chats', user?.id], (oldData: any) => {
+      queryClient.setQueryData(['recent-chats', stableUser?.id], (oldData: any) => {
         if (!oldData) return oldData;
         return {
           ...oldData,
@@ -765,10 +773,10 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                   </div>
                   <div className="flex flex-row items-center gap-2 leading-none group-data-[collapsible=icon]:hidden">
                     <span className="font-be-vietnam-pro font-light tracking-tighter text-xl">indexblue</span>
-                    {user && isProUser && (
+                    {stableUser && stableIsProUser && (
                       <div className="w-fit">
                         <span className="animate-shimmer text-xs font-baumans inline-flex items-center justify-center min-w-6 h-4 px-1.5 pt-0 pb-0.5 rounded-md shadow-sm bg-linear-to-br from-secondary/30 via-primary/25 to-accent/30 text-foreground ring-1 ring-primary/25 ring-offset-1 ring-offset-background dark:bg-linear-to-br dark:from-primary dark:via-secondary dark:to-primary dark:text-foreground dark:ring-primary/40">
-                          {user.isMaxUser ? 'max' : 'pro'}
+                          {stableUser.isMaxUser ? 'max' : 'pro'}
                         </span>
                       </div>
                     )}
@@ -827,7 +835,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
             </SidebarMenuButton>
           </SidebarMenuItem>
 
-          {user && (
+          {stableUser && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -852,14 +860,39 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           )}
 
           {/* Tools Section Label */}
-          {user && (
+          {stableUser && (
             <div className="px-2 py-1.5 group-data-[collapsible=icon]:hidden">
               <span className="font-pixel text-[11px] text-muted-foreground/60 uppercase tracking-[0.12em]">Tools</span>
             </div>
           )}
 
+          {/* Builder */}
+          {stableUser && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip="Builder"
+                className={cn(
+                  'hover:bg-primary/10 transition-all duration-200',
+                  pathname === '/builder' || pathname?.startsWith('/builder/')
+                    ? 'bg-primary/15 text-foreground font-medium'
+                    : '',
+                )}
+              >
+                <Link
+                  href="/builder"
+                  onClick={closeMobileSidebar}
+                  className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:w-full"
+                >
+                  <CodeIcon size={18} weight="regular" />
+                  <span className="group-data-[collapsible=icon]:hidden">Builder</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+
           {/* Lookout */}
-          {user && (
+          {stableUser && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -884,7 +917,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           )}
 
           {/* Apps */}
-          {user && process.env.NEXT_PUBLIC_MCP_ENABLED === 'true' && (
+          {stableUser && process.env.NEXT_PUBLIC_MCP_ENABLED === 'true' && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -909,7 +942,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           )}
 
           {/* XQL */}
-          {user && (
+          {stableUser && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -932,7 +965,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           )}
 
           {/* Voice */}
-          {user && (
+          {stableUser && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -981,7 +1014,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           )} */}
 
           {/* InMail */}
-          {user && (
+          {stableUser && (
             <SidebarMenuItem>
               <SidebarMenuButton
                 asChild
@@ -1019,7 +1052,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
           </SidebarMenuItem>
 
           {/* Guest Info Links when signed out */}
-          {!user &&
+          {!stableUser &&
             signedOutLinks.map((link) => {
               const Icon = link.icon;
               const content = (
@@ -1059,7 +1092,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
         </SidebarMenu>
 
         {/* Recent section title - fixed, does not scroll */}
-        {user && (
+        {stableUser && (
           <button
             type="button"
             onClick={() => setIsRecentCollapsed((prev) => !prev)}
@@ -1078,7 +1111,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
       <SidebarContent className="p-2 pt-0">
         <SidebarMenu className="group-data-[collapsible=icon]:items-center group-data-[collapsible=icon]:justify-center">
           {/* Recent Chats - With Date Grouping */}
-          {user && !isRecentCollapsed && (
+          {stableUser && !isRecentCollapsed && (
             <>
               {/* Expanded state - chat list */}
               <div className="group-data-[collapsible=icon]:hidden">
@@ -1305,7 +1338,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
         </SidebarMenu>
 
         {/* Upgrade */}
-        {user && !isProUser && (
+        {stableUser && !stableIsProUser && (
           <SidebarGroup className="p-0 mt-auto">
             <SidebarGroupContent>
               {/* Expanded state */}
@@ -1351,7 +1384,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
 
       {/* Footer - User Account with Dropdown Menu */}
       <SidebarFooter className="group-data-[collapsible=icon]:border-none border-t border-border p-0 gap-0">
-        {user ? (
+        {stableUser ? (
           <SidebarMenu className="gap-0">
             <SidebarMenuItem>
               {/* Expanded state - full user card as dropdown trigger */}
@@ -1361,22 +1394,22 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                     <button className="flex w-full items-center justify-between gap-2 px-3 py-4 text-left outline-hidden ring-0 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-0 active:bg-primary/20 active:text-sidebar-accent-foreground">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <div className="relative shrink-0">
-                          <div className={cn('rounded-full', isProUser && 'p-[1.5px] bg-primary')}>
+                          <div className={cn('rounded-full', stableIsProUser && 'p-[1.5px] bg-primary')}>
                             <Avatar
                               className={cn(
                                 'h-8 w-8 overflow-hidden rounded-full mask-[radial-gradient(white,black)] [-webkit-mask-image:-webkit-radial-gradient(white,black)]',
-                                isProUser && 'ring-[1.5px] ring-sidebar',
+                                stableIsProUser && 'ring-[1.5px] ring-sidebar',
                               )}
                             >
-                              <AvatarImage src={user.image || ''} className={cn(blurPersonalInfo && 'blur-sm')} />
+                              <AvatarImage src={stableUser.image || ''} className={cn(blurPersonalInfo && 'blur-sm')} />
                               <AvatarFallback
                                 className={cn(
                                   'bg-primary text-primary-foreground font-semibold',
                                   blurPersonalInfo && 'blur-sm',
                                 )}
                               >
-                                {user.name
-                                  ? user.name
+                                {stableUser.name
+                                  ? stableUser.name
                                       .split(' ')
                                       .map((n: string) => n[0])
                                       .join('')
@@ -1385,9 +1418,9 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                               </AvatarFallback>
                             </Avatar>
                           </div>
-                          {isProUser && (
+                          {stableIsProUser && (
                             <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 flex items-center justify-center h-3.5 px-1 pb-0.5 rounded-full text-[10px] font-baumans leading-none bg-primary text-primary-foreground shadow-xs">
-                              {user?.isMaxUser ? 'max' : 'pro'}
+                              {stableUser?.isMaxUser ? 'max' : 'pro'}
                             </span>
                           )}
                         </div>
@@ -1398,14 +1431,14 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                               blurPersonalInfo && 'blur-sm',
                             )}
                           >
-                            {user.name || 'User'}
+                            {stableUser.name || 'User'}
                           </span>
                           <span className="text-xs text-sidebar-foreground/70 truncate text-left w-full">
-                            {isProUser ? (
+                            {stableIsProUser ? (
                               <span>
                                 Indexblue{' '}
                                 <span className="font-pixel text-[10px] uppercase tracking-wider">
-                                  {user?.isMaxUser ? 'Max' : 'Pro'}
+                                  {stableUser?.isMaxUser ? 'Max' : 'Pro'}
                                 </span>
                               </span>
                             ) : (
@@ -1425,8 +1458,8 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                     collisionPadding={{ bottom: 20 }}
                   >
                     <UserDropdownContent
-                      user={user}
-                      isProUser={Boolean(isProUser)}
+                      user={stableUser}
+                      isProUser={Boolean(stableIsProUser)}
                       blurPersonalInfo={Boolean(blurPersonalInfo)}
                       closeMobileSidebar={closeMobileSidebar}
                       onShortcutsOpen={() => setKeyboardShortcutsOpen(true)}
@@ -1442,22 +1475,22 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-10 w-10 p-0 overflow-visible">
                       <div className="relative">
-                        <div className={cn('rounded-full', isProUser && 'p-[1.5px] bg-primary')}>
+                        <div className={cn('rounded-full', stableIsProUser && 'p-[1.5px] bg-primary')}>
                           <Avatar
                             className={cn(
                               'h-6 w-6 overflow-hidden rounded-full mask-[radial-gradient(white,black)] [-webkit-mask-image:-webkit-radial-gradient(white,black)]',
-                              isProUser && 'ring-[1.5px] ring-sidebar',
+                              stableIsProUser && 'ring-[1.5px] ring-sidebar',
                             )}
                           >
-                            <AvatarImage src={user.image || ''} className={cn(blurPersonalInfo && 'blur-sm')} />
+                            <AvatarImage src={stableUser.image || ''} className={cn(blurPersonalInfo && 'blur-sm')} />
                             <AvatarFallback
                               className={cn(
                                 'bg-primary text-primary-foreground font-semibold text-xs',
                                 blurPersonalInfo && 'blur-sm',
                               )}
                             >
-                              {user.name
-                                ? user.name
+                              {stableUser.name
+                                ? stableUser.name
                                     .split(' ')
                                     .map((n: string) => n[0])
                                     .join('')
@@ -1466,9 +1499,9 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                             </AvatarFallback>
                           </Avatar>
                         </div>
-                        {isProUser && (
+                        {stableIsProUser && (
                           <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 flex items-center justify-center h-3 px-1 pb-0.5 rounded-full text-[9px] font-baumans leading-none bg-primary text-primary-foreground shadow-xs">
-                            {user?.isMaxUser ? 'max' : 'pro'}
+                            {stableUser?.isMaxUser ? 'max' : 'pro'}
                           </span>
                         )}
                       </div>
@@ -1476,8 +1509,8 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                   </DropdownMenuTrigger>
                   <DropdownMenuContent side="right" align="end" className="w-60">
                     <UserDropdownContent
-                      user={user}
-                      isProUser={Boolean(isProUser)}
+                      user={stableUser}
+                      isProUser={Boolean(stableIsProUser)}
                       blurPersonalInfo={Boolean(blurPersonalInfo)}
                       closeMobileSidebar={closeMobileSidebar}
                       onShortcutsOpen={() => setKeyboardShortcutsOpen(true)}
@@ -1532,7 +1565,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
         )}
       </SidebarFooter>
 
-      {user && (
+      {stableUser && (
         <>
           <Dialog open={Boolean(renameTarget)} onOpenChange={(open) => (!open ? closeRenameDialog() : null)}>
             <DialogContent className="sm:max-w-[420px]">
@@ -1582,7 +1615,7 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
             selectedVisibilityType={shareVisibility}
             onVisibilityChange={handleShareVisibilityChange}
             isOwner
-            user={user}
+            user={stableUser}
           />
 
           <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => (!open ? closeDeleteDialog() : null)}>

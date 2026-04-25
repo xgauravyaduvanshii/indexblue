@@ -2,9 +2,8 @@ import React from 'react';
 import type { Metadata } from 'next';
 import { SidebarLayout } from '@/components/sidebar-layout';
 
-const title = 'Apps';
-const description =
-  'Browse and connect apps to power your AI workflows. Integrate with GitHub, Notion, Linear, Figma, Stripe, and 50+ more services.';
+const title = 'Indexblue Builder';
+const description = 'Build and organize app workflows, prompts, and tool-driven experiences inside Indexblue.';
 
 export const metadata: Metadata = {
   title,
@@ -12,7 +11,7 @@ export const metadata: Metadata = {
   openGraph: {
     title,
     description,
-    url: 'https://indexblue.ai/apps',
+    url: 'https://indexblue.ai/builder',
     siteName: 'Indexblue',
     type: 'website',
   },
@@ -22,11 +21,11 @@ export const metadata: Metadata = {
     description,
   },
   alternates: {
-    canonical: 'https://indexblue.ai/apps',
+    canonical: 'https://indexblue.ai/builder',
   },
 };
 
-export default function AppsLayout({ children }: { children: React.ReactNode }) {
+export default function BuilderLayout({ children }: { children: React.ReactNode }) {
   return (
     <SidebarLayout>
       <div className="min-h-screen bg-background">{children}</div>

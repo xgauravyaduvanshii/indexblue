@@ -661,6 +661,7 @@ function createBrowsePageTool(dataStream: UIMessageStreamWriter<ChatMessage> | u
 function createBuildWebSearchTool(dataStream: UIMessageStreamWriter<ChatMessage> | undefined) {
   const exa = new Exa(serverEnv.EXA_API_KEY);
   const firecrawl = new FirecrawlApp({ apiKey: serverEnv.FIRECRAWL_API_KEY });
+  type ExaSearchCategory = 'news' | 'company' | 'research paper' | 'financial report' | 'pdf' | 'personal site' | 'people';
 
   return tool({
     description:
@@ -708,7 +709,9 @@ function createBuildWebSearchTool(dataStream: UIMessageStreamWriter<ChatMessage>
           const startPublishedDate = startDate ? new Date(startDate).toISOString() : undefined;
           const endPublishedDate = startDate ? new Date().toISOString() : undefined;
 
-          const exaCategory = category ?? undefined;
+          // Exa's current typed category set no longer includes "tweet".
+          // For that case, fall back to an unscoped search instead of failing type checks.
+          const exaCategory: ExaSearchCategory | undefined = category === 'tweet' ? undefined : category;
 
           const { results: exaResults } = await exa.search(query, {
             numResults: 6,

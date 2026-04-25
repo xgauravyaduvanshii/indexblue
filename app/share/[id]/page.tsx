@@ -39,7 +39,6 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       url: `https://indexblue.ai/share/${id}`,
       description: 'A shared chat on indexblue.ai',
       siteName: 'indexblue.ai',
-      creator: '@sciraai',
       images: [
         {
           url: `https://indexblue.ai/api/og/chat/${id}`,

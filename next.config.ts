@@ -25,7 +25,9 @@ const nextConfig: NextConfig = {
     },
     resolveExtensions: ['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.json'],
   },
-  reactCompiler: true,
+  // The React compiler adds noticeable overhead to local route compilation in this app's
+  // very large client component graph, so keep it for production builds only.
+  reactCompiler: process.env.NODE_ENV === 'production',
   experimental: {
     webpackMemoryOptimizations: true,
     turbopackFileSystemCacheForDev: true,

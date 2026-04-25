@@ -100,7 +100,6 @@ export async function generateMetadata({ params }: { params: Promise<{ id: strin
       url: `https://indexblue.ai/search/${id}`,
       description: 'A search in indexblue.ai',
       siteName: 'indexblue.ai',
-      creator: '@sciraai',
       images: [
         {
           url: `https://indexblue.ai/api/og/chat/${id}`,

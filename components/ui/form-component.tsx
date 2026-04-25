@@ -1748,7 +1748,7 @@ const ModelSwitcher: React.FC<ModelSwitcherProps> = React.memo(
                   </div>
                 ) : (
                   <div className="flex items-center justify-center gap-2">
-                    <p className="text-3xl font-semibold tracking-tight font-be-vietnam-pro">scira</p>
+                    <p className="text-3xl font-semibold tracking-tight font-be-vietnam-pro">Indexblue</p>
                     <ProBadge />
                   </div>
                 )}

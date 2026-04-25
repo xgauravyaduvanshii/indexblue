@@ -26,7 +26,6 @@ export const metadata: Metadata = {
     title,
     description,
     images: ["https://indexblue.ai/voice/twitter-image.png"],
-    creator: "@sciraai",
   },
   alternates: {
     canonical: "https://indexblue.ai/voice",
