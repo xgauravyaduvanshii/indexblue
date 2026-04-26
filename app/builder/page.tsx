@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import {
   AppWindow,
   Cable,
@@ -31,7 +31,8 @@ import { cn } from '@/lib/utils';
 
 type BuilderMode = 'local' | 'web' | 'ssh';
 type SshAuthMode = 'config' | 'key' | 'password';
-type BuilderSubView = 'default' | 'git' | 'zip';
+type BuilderSubView = 'default' | 'git' | 'zip' | 'template';
+type FolderSpace = 'workspace' | 'projects' | 'sandbox';
 type GitHubRepo = {
   id: number;
   name: string;
@@ -47,6 +48,7 @@ type ZipTreeNode = {
   type: 'file' | 'folder';
   children?: ZipTreeNode[];
 };
+type TemplateId = 'next-app' | 'static-site' | 'node-api';
 
 const SECTIONS = {
   local: {
@@ -96,6 +98,34 @@ const SECTIONS = {
   }
 >;
 
+const SPACE_OPTIONS: Array<{ value: FolderSpace; label: string }> = [
+  { value: 'workspace', label: 'Workspace' },
+  { value: 'projects', label: 'Projects' },
+  { value: 'sandbox', label: 'Sandbox' },
+];
+
+const TEMPLATE_OPTIONS: Array<{
+  id: TemplateId;
+  name: string;
+  description: string;
+}> = [
+  {
+    id: 'next-app',
+    name: 'Next App Starter',
+    description: 'App Router scaffold for a new product workspace.',
+  },
+  {
+    id: 'static-site',
+    name: 'Static Site',
+    description: 'Simple HTML and CSS starter for quick web pages.',
+  },
+  {
+    id: 'node-api',
+    name: 'Node API',
+    description: 'Small server starter for API or backend experiments.',
+  },
+];
+
 export default function BuilderPage() {
   const [mode, setMode] = useState<BuilderMode | null>(null);
   const [sshAuthMode, setSshAuthMode] = useState<SshAuthMode>('config');
@@ -110,6 +140,7 @@ export default function BuilderPage() {
   const [cloneTargetDir, setCloneTargetDir] = useState<string | null>(null);
   const [cloneError, setCloneError] = useState<string | null>(null);
   const [isCloning, setIsCloning] = useState(false);
+
   const [zipFile, setZipFile] = useState<File | null>(null);
   const [zipImportError, setZipImportError] = useState<string | null>(null);
   const [zipExtractedPath, setZipExtractedPath] = useState<string | null>(null);
@@ -121,15 +152,46 @@ export default function BuilderPage() {
   const [selectedZipFileContent, setSelectedZipFileContent] = useState<string>('');
   const [isLoadingZipFile, setIsLoadingZipFile] = useState(false);
   const [isZipPreviewOpen, setIsZipPreviewOpen] = useState(false);
+
+  const [isCreateFolderOpen, setIsCreateFolderOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderSpace, setNewFolderSpace] = useState<FolderSpace>('workspace');
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [localFolderError, setLocalFolderError] = useState<string | null>(null);
+  const [createdFolderPath, setCreatedFolderPath] = useState<string | null>(null);
+  const [openedFolderName, setOpenedFolderName] = useState<string | null>(null);
+
+  const [selectedTemplateId, setSelectedTemplateId] = useState<TemplateId>('next-app');
+  const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [templateCreatedPath, setTemplateCreatedPath] = useState<string | null>(null);
+  const [templateCreatedName, setTemplateCreatedName] = useState<string | null>(null);
+
+  const [sshHost, setSshHost] = useState('');
+  const [sshPort, setSshPort] = useState('22');
+  const [sshUsername, setSshUsername] = useState('');
+  const [sshConfigContent, setSshConfigContent] = useState('');
+  const [sshKeyContent, setSshKeyContent] = useState('');
+  const [sshPassphrase, setSshPassphrase] = useState('');
+  const [sshPassword, setSshPassword] = useState('');
+  const [sshLogs, setSshLogs] = useState<string[]>([]);
+  const [sshError, setSshError] = useState<string | null>(null);
+  const [sshStatus, setSshStatus] = useState<string | null>(null);
+  const [isConnectingSsh, setIsConnectingSsh] = useState(false);
+
   const { data: session } = useSession();
   const activeSection = mode ? SECTIONS[mode] : null;
 
-  const openGitCloneCard = () => {
-    setSubView('git');
+  const resetGitState = () => {
     setCloneLogs([]);
     setCloneError(null);
     setCloneTargetDir(null);
     setRepoLoadError(null);
+  };
+
+  const openGitCloneCard = () => {
+    setSubView('git');
+    resetGitState();
   };
 
   const closeGitCloneCard = () => {
@@ -152,6 +214,16 @@ export default function BuilderPage() {
   const closeZipImportCard = () => {
     setSubView('default');
     setZipImportError(null);
+  };
+
+  const openTemplateCard = () => {
+    setSubView('template');
+    setTemplateError(null);
+  };
+
+  const closeTemplateCard = () => {
+    setSubView('default');
+    setTemplateError(null);
   };
 
   useEffect(() => {
@@ -272,7 +344,8 @@ export default function BuilderPage() {
           const event = JSON.parse(line) as { type: string; message?: string; targetDir?: string };
 
           if (event.message) {
-            setCloneLogs((current) => [...current, event.message!]);
+            const message = event.message;
+            setCloneLogs((current) => [...current, message]);
           }
 
           if (event.type === 'done') {
@@ -366,6 +439,172 @@ export default function BuilderPage() {
     }
   };
 
+  const handleOpenFolder = async () => {
+    setLocalFolderError(null);
+
+    const picker = (window as Window & {
+      showDirectoryPicker?: () => Promise<{ name?: string }>;
+    }).showDirectoryPicker;
+
+    if (!picker) {
+      setLocalFolderError('Directory picker is not available in this browser.');
+      return;
+    }
+
+    try {
+      const handle = await picker();
+      setOpenedFolderName(handle?.name ?? 'Selected folder');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        return;
+      }
+      setLocalFolderError(error instanceof Error ? error.message : 'Failed to open folder.');
+    }
+  };
+
+  const handleCreateLocalFolder = async () => {
+    if (!newFolderName.trim()) {
+      setLocalFolderError('Folder name is required.');
+      return;
+    }
+
+    setIsCreatingFolder(true);
+    setLocalFolderError(null);
+
+    try {
+      const response = await fetch('/api/builder/local/folder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          folderName: newFolderName.trim(),
+          space: newFolderSpace,
+        }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Failed to create folder.');
+      }
+
+      setCreatedFolderPath(payload.createdPath ?? null);
+      setIsCreateFolderOpen(false);
+      setNewFolderName('');
+    } catch (error) {
+      setLocalFolderError(error instanceof Error ? error.message : 'Failed to create folder.');
+    } finally {
+      setIsCreatingFolder(false);
+    }
+  };
+
+  const handleReadTextFile = async (
+    event: ChangeEvent<HTMLInputElement>,
+    onLoaded: (content: string) => void,
+  ) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    onLoaded(await file.text());
+  };
+
+  const handleCreateTemplate = async () => {
+    setIsCreatingTemplate(true);
+    setTemplateError(null);
+    setTemplateCreatedPath(null);
+
+    try {
+      const response = await fetch('/api/builder/template/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ templateId: selectedTemplateId }),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Failed to create template workspace.');
+      }
+
+      setTemplateCreatedPath(payload.createdPath ?? null);
+      setTemplateCreatedName(payload.templateName ?? null);
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : 'Failed to create template workspace.');
+    } finally {
+      setIsCreatingTemplate(false);
+    }
+  };
+
+  const handleConnectSsh = async () => {
+    if (!sshHost.trim() || !sshPort.trim() || !sshUsername.trim()) {
+      setSshError('Host, port, and username are required.');
+      return;
+    }
+
+    setIsConnectingSsh(true);
+    setSshError(null);
+    setSshStatus(null);
+    setSshLogs(['Starting SSH connection...']);
+
+    try {
+      const response = await fetch('/api/builder/ssh/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          host: sshHost.trim(),
+          port: Number(sshPort),
+          username: sshUsername.trim(),
+          authMode: sshAuthMode,
+          configContent: sshConfigContent,
+          keyContent: sshKeyContent,
+          passphrase: sshPassphrase,
+          password: sshPassword,
+        }),
+      });
+
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => null);
+        throw new Error(payload?.error ?? 'SSH request failed.');
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line) as { type: string; message?: string; status?: string };
+
+          if (event.message) {
+            const message = event.message;
+            setSshLogs((current) => [...current, message]);
+          }
+
+          if (event.type === 'done') {
+            setSshStatus(event.status ?? 'connected');
+          }
+
+          if (event.type === 'error') {
+            setSshError(event.message ?? 'SSH connection failed.');
+          }
+        }
+      }
+    } catch (error) {
+      setSshError(error instanceof Error ? error.message : 'SSH connection failed.');
+    } finally {
+      setIsConnectingSsh(false);
+    }
+  };
+
+  const hideSectionIntro =
+    (mode === 'local' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
+    (mode === 'web' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
+    (mode === 'ssh' && subView === 'zip');
+
   return (
     <div className="relative flex h-dvh w-full flex-col items-center overflow-hidden bg-background">
       <div className="relative z-10 flex min-h-0 w-full max-w-lg flex-1 flex-col items-center p-4 safe-area-inset-bottom sm:p-6">
@@ -403,42 +642,25 @@ export default function BuilderPage() {
               </div>
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <button
-                  type="button"
-                  onClick={() => setMode('local')}
-                  onClickCapture={() => setSubView('default')}
-                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
-                >
-                  <HardDrive className="size-4" />
-                  Local
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('web')}
-                  onClickCapture={() => setSubView('default')}
-                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
-                >
-                  <AppWindow className="size-4" />
-                  Web
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('ssh')}
-                  onClickCapture={() => setSubView('default')}
-                  className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
-                >
-                  <Terminal className="size-4" />
-                  SSH
-                </button>
+                <ModeButton icon={HardDrive} label="Local" onClick={() => {
+                  setMode('local');
+                  setSubView('default');
+                }} />
+                <ModeButton icon={AppWindow} label="Web" onClick={() => {
+                  setMode('web');
+                  setSubView('default');
+                }} />
+                <ModeButton icon={Terminal} label="SSH" onClick={() => {
+                  setMode('ssh');
+                  setSubView('default');
+                }} />
               </div>
             </div>
           )}
 
           {mode && activeSection && (
             <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
-              {!(mode === 'local' && (subView === 'git' || subView === 'zip')) &&
-                !(mode === 'web' && (subView === 'git' || subView === 'zip')) &&
-                !(mode === 'ssh' && subView === 'zip') && (
+              {!hideSectionIntro && (
                 <>
                   <div className="flex items-start justify-between gap-3">
                     <div className="flex flex-col gap-1">
@@ -486,151 +708,63 @@ export default function BuilderPage() {
                         </p>
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                        <button
-                          type="button"
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <FolderOpen className="size-3.5" />
-                          Open Folder
-                        </button>
-                        <button
-                          type="button"
-                          onClick={openGitCloneCard}
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <GitBranch className="size-3.5" />
-                          Clone Git Repo
-                        </button>
-                        <button
-                          type="button"
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <FolderPlus className="size-3.5" />
-                          Create Folder
-                        </button>
-                        <button
-                          type="button"
-                          onClick={openZipImportCard}
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <FileArchive className="size-3.5" />
-                          Import ZIP
-                        </button>
+                        <ActionButton icon={FolderOpen} label="Open Folder" onClick={handleOpenFolder} />
+                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                        <ActionButton
+                          icon={FolderPlus}
+                          label="Create Folder"
+                          onClick={() => {
+                            setLocalFolderError(null);
+                            setIsCreateFolderOpen(true);
+                          }}
+                        />
+                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
                       </div>
+
+                      {(localFolderError || openedFolderName || createdFolderPath) && (
+                        <div className="rounded-lg border border-border/50 bg-card/50 p-3 text-[11px]">
+                          {localFolderError && <p className="text-red-400">{localFolderError}</p>}
+                          {openedFolderName && <p className="text-foreground/80">Opened folder: {openedFolderName}</p>}
+                          {createdFolderPath && <p className="text-emerald-400">Created folder: {createdFolderPath}</p>}
+                        </div>
+                      )}
                     </>
                   )}
 
                   {subView === 'git' && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
-                            <GitBranch className="size-4 text-foreground" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
-                            <p className="text-[11px] text-muted-foreground/70">Enter the repository URL and choose auth.</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={closeGitCloneCard}
-                          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          Back
-                        </button>
-                      </div>
-
-                      {(!session?.user || !githubConnected) && (
-                        <button
-                          type="button"
-                          onClick={() => signIn.social({ provider: 'github', callbackURL: '/builder' })}
-                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                        >
-                          <GitBranch className="size-3.5" />
-                          Connect GitHub
-                        </button>
-                      )}
-
-                      {session?.user && githubConnected && (
-                        <>
-                          <p className="text-[11px] text-muted-foreground/80">Select a connected GitHub repository.</p>
-                          {isLoadingRepos && <p className="text-[11px] text-muted-foreground/80">Loading repositories...</p>}
-                          {repoLoadError && <p className="text-[11px] text-red-400">{repoLoadError}</p>}
-                          {githubRepos.length > 0 && (
-                            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
-                              {githubRepos.map((repo) => (
-                                <button
-                                  key={repo.id}
-                                  type="button"
-                                  onClick={() => void handleSelectRepo(repo)}
-                                  className={cn(
-                                    'mb-2 flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors last:mb-0',
-                                    selectedRepoId === repo.id
-                                      ? 'border-primary/30 bg-primary/15 text-foreground'
-                                      : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
-                                  )}
-                                >
-                                  <span>{repo.fullName}</span>
-                                  <span>{repo.private ? 'Private' : 'Public'}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-muted-foreground/80">Repository URL</span>
-                        <input
-                          type="text"
-                          placeholder="https://github.com/user/repo.git"
-                          value={repoUrl}
-                          onChange={(event) => setRepoUrl(event.target.value)}
-                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                        />
-                      </label>
-
-                      {cloneError && <p className="text-[11px] text-red-400">{cloneError}</p>}
-
-                      {cloneTargetDir && (
-                        <p className="text-[11px] text-emerald-400">Cloned into: {cloneTargetDir}</p>
-                      )}
-
-                      {cloneLogs.length > 0 && (
-                        <div className="max-h-36 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
-                          {cloneLogs.map((log, index) => (
-                            <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
-                              {log}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={handleCloneRepository}
-                        disabled={isCloning || !repoUrl}
-                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                      >
-                        <GitBranch className="size-3.5" />
-                        {isCloning ? 'Cloning...' : 'Clone Repository'}
-                      </button>
-                    </div>
+                    <GitCloneCard
+                      sessionUser={!!session?.user}
+                      githubConnected={githubConnected}
+                      isLoadingRepos={isLoadingRepos}
+                      repoLoadError={repoLoadError}
+                      githubRepos={githubRepos}
+                      selectedRepoId={selectedRepoId}
+                      onSelectRepo={handleSelectRepo}
+                      repoUrl={repoUrl}
+                      onRepoUrlChange={setRepoUrl}
+                      cloneError={cloneError}
+                      cloneTargetDir={cloneTargetDir}
+                      cloneLogs={cloneLogs}
+                      isCloning={isCloning}
+                      onClone={handleCloneRepository}
+                      onBack={closeGitCloneCard}
+                    />
                   )}
 
-                  {subView === 'zip' && <ZipImportCard
-                    zipFile={zipFile}
-                    setZipFile={setZipFile}
-                    zipImportError={zipImportError}
-                    zipArchiveName={zipArchiveName}
-                    zipExtractedPath={zipExtractedPath}
-                    zipTree={zipTree}
-                    isImportingZip={isImportingZip}
-                    onImport={handleZipImport}
-                    onBack={closeZipImportCard}
-                    onOpenPreview={() => setIsZipPreviewOpen(true)}
-                  />}
+                  {subView === 'zip' && (
+                    <ZipImportCard
+                      zipFile={zipFile}
+                      setZipFile={setZipFile}
+                      zipImportError={zipImportError}
+                      zipArchiveName={zipArchiveName}
+                      zipExtractedPath={zipExtractedPath}
+                      zipTree={zipTree}
+                      isImportingZip={isImportingZip}
+                      onImport={handleZipImport}
+                      onBack={closeZipImportCard}
+                      onOpenPreview={() => setIsZipPreviewOpen(true)}
+                    />
+                  )}
                 </div>
               )}
 
@@ -645,307 +779,187 @@ export default function BuilderPage() {
                         </p>
                       </div>
                       <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                        <button
-                          type="button"
-                          onClick={openGitCloneCard}
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <GitBranch className="size-3.5" />
-                          Clone Git Repo
-                        </button>
-                        <button
-                          type="button"
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <Shapes className="size-3.5" />
-                          Templates
-                        </button>
-                        <button
-                          type="button"
-                          onClick={openZipImportCard}
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          <FileArchive className="size-3.5" />
-                          Import ZIP
-                        </button>
+                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                        <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
+                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
                       </div>
+
+                      {(templateCreatedName || templateCreatedPath) && (
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                          {templateCreatedName && <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>}
+                          {templateCreatedPath && <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>}
+                        </div>
+                      )}
                     </>
                   )}
 
                   {subView === 'git' && (
-                    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                        <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
-                            <GitBranch className="size-4 text-foreground" />
-                          </div>
-                          <div>
-                            <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
-                            <p className="text-[11px] text-muted-foreground/70">Use a repository URL with optional auth details.</p>
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={closeGitCloneCard}
-                          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
-                        >
-                          Back
-                        </button>
-                      </div>
-
-                      {(!session?.user || !githubConnected) && (
-                        <button
-                          type="button"
-                          onClick={() => signIn.social({ provider: 'github', callbackURL: '/builder' })}
-                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                        >
-                          <GitBranch className="size-3.5" />
-                          Connect GitHub
-                        </button>
-                      )}
-
-                      {session?.user && githubConnected && (
-                        <>
-                          <p className="text-[11px] text-muted-foreground/80">Select a connected GitHub repository.</p>
-                          {isLoadingRepos && <p className="text-[11px] text-muted-foreground/80">Loading repositories...</p>}
-                          {repoLoadError && <p className="text-[11px] text-red-400">{repoLoadError}</p>}
-                          {githubRepos.length > 0 && (
-                            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
-                              {githubRepos.map((repo) => (
-                                <button
-                                  key={repo.id}
-                                  type="button"
-                                  onClick={() => void handleSelectRepo(repo)}
-                                  className={cn(
-                                    'mb-2 flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors last:mb-0',
-                                    selectedRepoId === repo.id
-                                      ? 'border-primary/30 bg-primary/15 text-foreground'
-                                      : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
-                                  )}
-                                >
-                                  <span>{repo.fullName}</span>
-                                  <span>{repo.private ? 'Private' : 'Public'}</span>
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </>
-                      )}
-
-                      <label className="flex flex-col gap-1">
-                        <span className="text-[11px] text-muted-foreground/80">Repository URL</span>
-                        <input
-                          type="text"
-                          placeholder="https://github.com/user/repo.git"
-                          value={repoUrl}
-                          onChange={(event) => setRepoUrl(event.target.value)}
-                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                        />
-                      </label>
-
-                      {cloneError && <p className="text-[11px] text-red-400">{cloneError}</p>}
-
-                      {cloneTargetDir && (
-                        <p className="text-[11px] text-emerald-400">Cloned into: {cloneTargetDir}</p>
-                      )}
-
-                      {cloneLogs.length > 0 && (
-                        <div className="max-h-36 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
-                          {cloneLogs.map((log, index) => (
-                            <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
-                              {log}
-                            </p>
-                          ))}
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={handleCloneRepository}
-                        disabled={isCloning || !repoUrl}
-                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                      >
-                        <GitBranch className="size-3.5" />
-                        {isCloning ? 'Cloning...' : 'Clone Repository'}
-                      </button>
-                    </div>
+                    <GitCloneCard
+                      sessionUser={!!session?.user}
+                      githubConnected={githubConnected}
+                      isLoadingRepos={isLoadingRepos}
+                      repoLoadError={repoLoadError}
+                      githubRepos={githubRepos}
+                      selectedRepoId={selectedRepoId}
+                      onSelectRepo={handleSelectRepo}
+                      repoUrl={repoUrl}
+                      onRepoUrlChange={setRepoUrl}
+                      cloneError={cloneError}
+                      cloneTargetDir={cloneTargetDir}
+                      cloneLogs={cloneLogs}
+                      isCloning={isCloning}
+                      onClone={handleCloneRepository}
+                      onBack={closeGitCloneCard}
+                    />
                   )}
 
-                  {subView === 'zip' && <ZipImportCard
-                    zipFile={zipFile}
-                    setZipFile={setZipFile}
-                    zipImportError={zipImportError}
-                    zipArchiveName={zipArchiveName}
-                    zipExtractedPath={zipExtractedPath}
-                    zipTree={zipTree}
-                    isImportingZip={isImportingZip}
-                    onImport={handleZipImport}
-                    onBack={closeZipImportCard}
-                    onOpenPreview={() => setIsZipPreviewOpen(true)}
-                  />}
+                  {subView === 'template' && (
+                    <TemplateCard
+                      selectedTemplateId={selectedTemplateId}
+                      onSelectTemplate={setSelectedTemplateId}
+                      templateError={templateError}
+                      isCreatingTemplate={isCreatingTemplate}
+                      templateCreatedPath={templateCreatedPath}
+                      onCreate={handleCreateTemplate}
+                      onBack={closeTemplateCard}
+                    />
+                  )}
+
+                  {subView === 'zip' && (
+                    <ZipImportCard
+                      zipFile={zipFile}
+                      setZipFile={setZipFile}
+                      zipImportError={zipImportError}
+                      zipArchiveName={zipArchiveName}
+                      zipExtractedPath={zipExtractedPath}
+                      zipTree={zipTree}
+                      isImportingZip={isImportingZip}
+                      onImport={handleZipImport}
+                      onBack={closeZipImportCard}
+                      onOpenPreview={() => setIsZipPreviewOpen(true)}
+                    />
+                  )}
                 </div>
               )}
 
               {mode === 'ssh' && (
-                <div className="max-h-[52vh] overflow-y-auto rounded-xl border border-border/50 bg-background/50 p-3 pr-2">
+                <div className="max-h-[56vh] overflow-y-auto rounded-xl border border-border/50 bg-background/50 p-3 pr-2">
                   <div className="flex flex-col gap-3">
-                  {subView === 'default' && (
-                    <button
-                      type="button"
-                      onClick={openZipImportCard}
-                      className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                    >
-                      <FileArchive className="size-3.5" />
-                      Import ZIP
-                    </button>
-                  )}
-                  {subView === 'zip' && <ZipImportCard
-                    zipFile={zipFile}
-                    setZipFile={setZipFile}
-                    zipImportError={zipImportError}
-                    zipArchiveName={zipArchiveName}
-                    zipExtractedPath={zipExtractedPath}
-                    zipTree={zipTree}
-                    isImportingZip={isImportingZip}
-                    onImport={handleZipImport}
-                    onBack={closeZipImportCard}
-                    onOpenPreview={() => setIsZipPreviewOpen(true)}
-                  />}
-                  {subView === 'default' && (
-                    <>
-                  <div className="flex flex-col gap-1">
-                    <p className="text-xs font-medium text-foreground">SSH connection</p>
-                    <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                      Enter your remote machine details, then choose whether to authenticate with an SSH config file, a private
-                      key, or a password.
-                    </p>
-                  </div>
+                    {subView === 'default' && (
+                      <>
+                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
 
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-muted-foreground/80">Host</span>
-                      <input
-                        type="text"
-                        placeholder="example.server.com"
-                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1">
-                      <span className="text-[11px] text-muted-foreground/80">Port</span>
-                      <input
-                        type="text"
-                        placeholder="22"
-                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                      />
-                    </label>
-                    <label className="flex flex-col gap-1 sm:col-span-2">
-                      <span className="text-[11px] text-muted-foreground/80">Username</span>
-                      <input
-                        type="text"
-                        placeholder="ubuntu"
-                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                      />
-                    </label>
-                  </div>
+                        <div className="flex flex-col gap-1">
+                          <p className="text-xs font-medium text-foreground">SSH connection</p>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                            Enter your server details and test the connection with config, private key, or password mode.
+                          </p>
+                        </div>
 
-                  <div className="flex flex-col gap-2">
-                    <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <button
-                        type="button"
-                        onClick={() => setSshAuthMode('config')}
-                        className={cn(
-                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
-                          sshAuthMode === 'config'
-                            ? 'border-primary/30 bg-primary/15 text-foreground'
-                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                          <InputField label="Host" value={sshHost} onChange={setSshHost} placeholder="example.server.com" />
+                          <InputField label="Port" value={sshPort} onChange={setSshPort} placeholder="22" />
+                          <InputField label="Username" value={sshUsername} onChange={setSshUsername} placeholder="ubuntu" className="sm:col-span-2" />
+                        </div>
+
+                        <div className="flex flex-col gap-2">
+                          <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                            <AuthButton active={sshAuthMode === 'config'} icon={Upload} label="Config File" onClick={() => setSshAuthMode('config')} />
+                            <AuthButton active={sshAuthMode === 'key'} icon={KeyRound} label="Private Key" onClick={() => setSshAuthMode('key')} />
+                            <AuthButton active={sshAuthMode === 'password'} icon={Lock} label="Password" onClick={() => setSshAuthMode('password')} />
+                          </div>
+                        </div>
+
+                        {sshAuthMode === 'config' && (
+                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                            <p className="text-[11px] text-muted-foreground/80">Upload or paste your SSH config.</p>
+                            <input
+                              type="file"
+                              accept=".conf,.config,text/plain"
+                              onChange={(event) => void handleReadTextFile(event, setSshConfigContent)}
+                              className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
+                            />
+                            <textarea
+                              value={sshConfigContent}
+                              onChange={(event) => setSshConfigContent(event.target.value)}
+                              placeholder="Host my-server&#10;  HostName example.server.com&#10;  User ubuntu"
+                              className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
+                            />
+                          </div>
                         )}
-                      >
-                        <Upload className="size-3.5" />
-                        Config File
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSshAuthMode('key')}
-                        className={cn(
-                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
-                          sshAuthMode === 'key'
-                            ? 'border-primary/30 bg-primary/15 text-foreground'
-                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                        )}
-                      >
-                        <KeyRound className="size-3.5" />
-                        Private Key
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setSshAuthMode('password')}
-                        className={cn(
-                          'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
-                          sshAuthMode === 'password'
-                            ? 'border-primary/30 bg-primary/15 text-foreground'
-                            : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
-                        )}
-                      >
-                        <Lock className="size-3.5" />
-                        Password
-                      </button>
-                    </div>
-                  </div>
 
-                  {sshAuthMode === 'config' && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                      <p className="text-[11px] text-muted-foreground/80">Upload or choose your SSH config file.</p>
-                      <button
-                        type="button"
-                        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                      >
-                        <Upload className="size-3.5" />
-                        Add Config File
-                      </button>
-                    </div>
-                  )}
+                        {sshAuthMode === 'key' && (
+                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                            <p className="text-[11px] text-muted-foreground/80">Upload or paste a private key.</p>
+                            <input
+                              type="file"
+                              accept=".pem,.key,text/plain"
+                              onChange={(event) => void handleReadTextFile(event, setSshKeyContent)}
+                              className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
+                            />
+                            <textarea
+                              value={sshKeyContent}
+                              onChange={(event) => setSshKeyContent(event.target.value)}
+                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                              className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
+                            />
+                            <InputField label="Optional passphrase" value={sshPassphrase} onChange={setSshPassphrase} placeholder="Passphrase" type="password" />
+                          </div>
+                        )}
 
-                  {sshAuthMode === 'key' && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                      <p className="text-[11px] text-muted-foreground/80">Attach a private key file or paste the key contents.</p>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {sshAuthMode === 'password' && (
+                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                            <p className="text-[11px] text-muted-foreground/80">Enter the server password for reachability checks.</p>
+                            <input
+                              type="password"
+                              value={sshPassword}
+                              onChange={(event) => setSshPassword(event.target.value)}
+                              placeholder="SSH password"
+                              className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                            />
+                          </div>
+                        )}
+
+                        {sshError && <p className="text-[11px] text-red-400">{sshError}</p>}
+                        {sshStatus && <p className="text-[11px] text-emerald-400">SSH status: {sshStatus}</p>}
+
+                        {sshLogs.length > 0 && (
+                          <div className="max-h-40 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
+                            {sshLogs.map((log, index) => (
+                              <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
+                                {log}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
                         <button
                           type="button"
-                          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                          onClick={handleConnectSsh}
+                          disabled={isConnectingSsh}
+                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
                         >
-                          <KeyRound className="size-3.5" />
-                          Add Key File
+                          <Server className="size-3.5" />
+                          {isConnectingSsh ? 'Connecting...' : 'Connect with SSH'}
                         </button>
-                        <input
-                          type="password"
-                          placeholder="Optional passphrase"
-                          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                        />
-                      </div>
-                    </div>
-                  )}
+                      </>
+                    )}
 
-                  {sshAuthMode === 'password' && (
-                    <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                      <p className="text-[11px] text-muted-foreground/80">Enter the server password used for the SSH session.</p>
-                      <input
-                        type="password"
-                        placeholder="SSH password"
-                        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                    {subView === 'zip' && (
+                      <ZipImportCard
+                        zipFile={zipFile}
+                        setZipFile={setZipFile}
+                        zipImportError={zipImportError}
+                        zipArchiveName={zipArchiveName}
+                        zipExtractedPath={zipExtractedPath}
+                        zipTree={zipTree}
+                        isImportingZip={isImportingZip}
+                        onImport={handleZipImport}
+                        onBack={closeZipImportCard}
+                        onOpenPreview={() => setIsZipPreviewOpen(true)}
                       />
-                    </div>
-                  )}
-
-                  <button
-                    type="button"
-                    className="flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
-                  >
-                    <Server className="size-3.5" />
-                    Connect with SSH
-                  </button>
-                  </>
-                  )}
+                    )}
                   </div>
                 </div>
               )}
@@ -953,9 +967,57 @@ export default function BuilderPage() {
           )}
         </div>
       </div>
+
+      <Dialog open={isCreateFolderOpen} onOpenChange={setIsCreateFolderOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Create New Folder</DialogTitle>
+          </DialogHeader>
+          <div className="flex flex-col gap-3">
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-muted-foreground/80">Folder name</span>
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(event) => setNewFolderName(event.target.value)}
+                placeholder="my-new-workspace"
+                className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+              />
+            </label>
+
+            <label className="flex flex-col gap-1">
+              <span className="text-[11px] text-muted-foreground/80">Space</span>
+              <select
+                value={newFolderSpace}
+                onChange={(event) => setNewFolderSpace(event.target.value as FolderSpace)}
+                className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none focus:border-primary/40"
+              >
+                {SPACE_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {localFolderError && <p className="text-[11px] text-red-400">{localFolderError}</p>}
+
+            <button
+              type="button"
+              onClick={handleCreateLocalFolder}
+              disabled={isCreatingFolder}
+              className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+            >
+              <FolderPlus className="size-3.5" />
+              {isCreatingFolder ? 'Creating...' : 'Create Folder'}
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isZipPreviewOpen} onOpenChange={setIsZipPreviewOpen}>
         <DialogContent className="!h-[92vh] !w-[98vw] !max-w-[1820px] overflow-hidden rounded-[40px] border border-border/60 bg-background/96 p-0 shadow-[0_40px_140px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:rounded-[44px]">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_24%),radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_24%)] pointer-events-none" />
+          <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_24%),radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_24%)]" />
           <DialogHeader className="relative border-b border-border/60 bg-card/70 px-5 py-4 sm:px-8 sm:py-5">
             <DialogTitle className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">Extracted Files</DialogTitle>
           </DialogHeader>
@@ -1017,6 +1079,308 @@ export default function BuilderPage() {
           </div>
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+function ModeButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof HardDrive;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-14 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-sm text-foreground transition-colors hover:bg-muted/40"
+    >
+      <Icon className="size-4" />
+      {label}
+    </button>
+  );
+}
+
+function ActionButton({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: typeof HardDrive;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-11 items-center justify-center gap-2 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+    >
+      <Icon className="size-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function InputField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  className,
+  type = 'text',
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  className?: string;
+  type?: string;
+}) {
+  return (
+    <label className={cn('flex flex-col gap-1', className)}>
+      <span className="text-[11px] text-muted-foreground/80">{label}</span>
+      <input
+        type={type}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+      />
+    </label>
+  );
+}
+
+function AuthButton({
+  active,
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  icon: typeof HardDrive;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        'flex h-10 items-center justify-center gap-2 rounded-lg border px-3 text-xs transition-colors',
+        active
+          ? 'border-primary/30 bg-primary/15 text-foreground'
+          : 'border-border/50 bg-card/60 text-muted-foreground hover:bg-muted/40 hover:text-foreground',
+      )}
+    >
+      <Icon className="size-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function GitCloneCard({
+  sessionUser,
+  githubConnected,
+  isLoadingRepos,
+  repoLoadError,
+  githubRepos,
+  selectedRepoId,
+  onSelectRepo,
+  repoUrl,
+  onRepoUrlChange,
+  cloneError,
+  cloneTargetDir,
+  cloneLogs,
+  isCloning,
+  onClone,
+  onBack,
+}: {
+  sessionUser: boolean;
+  githubConnected: boolean;
+  isLoadingRepos: boolean;
+  repoLoadError: string | null;
+  githubRepos: GitHubRepo[];
+  selectedRepoId: number | null;
+  onSelectRepo: (repo: GitHubRepo) => Promise<void>;
+  repoUrl: string;
+  onRepoUrlChange: (value: string) => void;
+  cloneError: string | null;
+  cloneTargetDir: string | null;
+  cloneLogs: string[];
+  isCloning: boolean;
+  onClone: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
+            <GitBranch className="size-4 text-foreground" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
+            <p className="text-[11px] text-muted-foreground/70">Enter the repository URL and choose a connected repo if available.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
+        >
+          Back
+        </button>
+      </div>
+
+      {(!sessionUser || !githubConnected) && (
+        <button
+          type="button"
+          onClick={() => signIn.social({ provider: 'github', callbackURL: '/builder' })}
+          className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90"
+        >
+          <GitBranch className="size-3.5" />
+          Connect GitHub
+        </button>
+      )}
+
+      {sessionUser && githubConnected && (
+        <>
+          <p className="text-[11px] text-muted-foreground/80">Select a connected GitHub repository.</p>
+          {isLoadingRepos && <p className="text-[11px] text-muted-foreground/80">Loading repositories...</p>}
+          {repoLoadError && <p className="text-[11px] text-red-400">{repoLoadError}</p>}
+          {githubRepos.length > 0 && (
+            <div className="max-h-48 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
+              {githubRepos.map((repo) => (
+                <button
+                  key={repo.id}
+                  type="button"
+                  onClick={() => void onSelectRepo(repo)}
+                  className={cn(
+                    'mb-2 flex w-full items-start justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors last:mb-0',
+                    selectedRepoId === repo.id
+                      ? 'border-primary/30 bg-primary/15 text-foreground'
+                      : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
+                  )}
+                >
+                  <span>{repo.fullName}</span>
+                  <span>{repo.private ? 'Private' : 'Public'}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-muted-foreground/80">Repository URL</span>
+        <input
+          type="text"
+          placeholder="https://github.com/user/repo.git"
+          value={repoUrl}
+          onChange={(event) => onRepoUrlChange(event.target.value)}
+          className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+        />
+      </label>
+
+      {cloneError && <p className="text-[11px] text-red-400">{cloneError}</p>}
+      {cloneTargetDir && <p className="text-[11px] text-emerald-400">Cloned into: {cloneTargetDir}</p>}
+
+      {cloneLogs.length > 0 && (
+        <div className="max-h-36 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
+          {cloneLogs.map((log, index) => (
+            <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
+              {log}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <button
+        type="button"
+        onClick={onClone}
+        disabled={isCloning || !repoUrl}
+        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        <GitBranch className="size-3.5" />
+        {isCloning ? 'Cloning...' : 'Clone Repository'}
+      </button>
+    </div>
+  );
+}
+
+function TemplateCard({
+  selectedTemplateId,
+  onSelectTemplate,
+  templateError,
+  isCreatingTemplate,
+  templateCreatedPath,
+  onCreate,
+  onBack,
+}: {
+  selectedTemplateId: TemplateId;
+  onSelectTemplate: (value: TemplateId) => void;
+  templateError: string | null;
+  isCreatingTemplate: boolean;
+  templateCreatedPath: string | null;
+  onCreate: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <div className="flex size-8 items-center justify-center rounded-md border border-border/50 bg-card/60">
+            <Shapes className="size-4 text-foreground" />
+          </div>
+          <div>
+            <p className="text-xs font-medium text-foreground">Templates</p>
+            <p className="text-[11px] text-muted-foreground/70">Create a starter workspace from a web template card.</p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex h-8 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-[11px] text-foreground transition-colors hover:bg-muted/40"
+        >
+          Back
+        </button>
+      </div>
+
+      <div className="max-h-52 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
+        {TEMPLATE_OPTIONS.map((template) => (
+          <button
+            key={template.id}
+            type="button"
+            onClick={() => onSelectTemplate(template.id)}
+            className={cn(
+              'mb-2 flex w-full flex-col rounded-lg border px-3 py-2 text-left transition-colors last:mb-0',
+              selectedTemplateId === template.id
+                ? 'border-primary/30 bg-primary/15 text-foreground'
+                : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
+            )}
+          >
+            <span className="text-xs font-medium">{template.name}</span>
+            <span className="mt-1 text-[11px] leading-relaxed opacity-80">{template.description}</span>
+          </button>
+        ))}
+      </div>
+
+      {templateError && <p className="text-[11px] text-red-400">{templateError}</p>}
+      {templateCreatedPath && <p className="text-[11px] text-emerald-400">Created in: {templateCreatedPath}</p>}
+
+      <button
+        type="button"
+        onClick={onCreate}
+        disabled={isCreatingTemplate}
+        className="flex h-10 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+      >
+        <Shapes className="size-3.5" />
+        {isCreatingTemplate ? 'Creating Template...' : 'Create Template Workspace'}
+      </button>
     </div>
   );
 }
