@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
+import { auth } from '@/lib/auth';
+import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +43,12 @@ function chunkToLines(buffer: string, chunk: Buffer | string) {
 }
 
 export async function POST(request: NextRequest) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const parsed = cloneSchema.safeParse(await request.json());
 
   if (!parsed.success) {
@@ -126,10 +134,26 @@ export async function POST(request: NextRequest) {
           }
 
           if (code === 0) {
+            const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+              userId: session.user.id,
+              sourceType: 'github',
+              workspacePath: targetDir,
+              fallbackName: cloneBaseName,
+              metadata: {
+                sourceLabel: 'Git Repository',
+                sourceUrl: repoUrl,
+                importMeta: {
+                  mode: parsed.data.mode ?? 'web',
+                  authMode,
+                },
+              },
+            });
             emit(controller, {
               type: 'done',
               message: 'Repository cloned successfully.',
               targetDir,
+              projectId: project.id,
+              redirectTo,
             });
           } else {
             emit(controller, {

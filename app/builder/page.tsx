@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ChangeEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   AppWindow,
   Cable,
@@ -127,6 +128,7 @@ const TEMPLATE_OPTIONS: Array<{
 ];
 
 export default function BuilderPage() {
+  const router = useRouter();
   const [mode, setMode] = useState<BuilderMode | null>(null);
   const [sshAuthMode, setSshAuthMode] = useState<SshAuthMode>('config');
   const [subView, setSubView] = useState<BuilderSubView>('default');
@@ -181,6 +183,12 @@ export default function BuilderPage() {
 
   const { data: session } = useSession();
   const activeSection = mode ? SECTIONS[mode] : null;
+  const isDevMode = process.env.NODE_ENV === 'development';
+
+  const openBuilderProject = (redirectTo?: string | null) => {
+    if (!redirectTo) return;
+    router.push(redirectTo);
+  };
 
   const resetGitState = () => {
     setCloneLogs([]);
@@ -341,7 +349,12 @@ export default function BuilderPage() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
-          const event = JSON.parse(line) as { type: string; message?: string; targetDir?: string };
+          const event = JSON.parse(line) as {
+            type: string;
+            message?: string;
+            targetDir?: string;
+            redirectTo?: string;
+          };
 
           if (event.message) {
             const message = event.message;
@@ -350,6 +363,7 @@ export default function BuilderPage() {
 
           if (event.type === 'done') {
             setCloneTargetDir(event.targetDir ?? null);
+            openBuilderProject(event.redirectTo ?? null);
           }
 
           if (event.type === 'error') {
@@ -397,6 +411,7 @@ export default function BuilderPage() {
       setSelectedZipFile(null);
       setSelectedZipFileContent('');
       setIsZipPreviewOpen(true);
+      openBuilderProject(payload.redirectTo ?? null);
     } catch (error) {
       setZipImportError(error instanceof Error ? error.message : 'Failed to import ZIP archive.');
     } finally {
@@ -489,6 +504,7 @@ export default function BuilderPage() {
       setCreatedFolderPath(payload.createdPath ?? null);
       setIsCreateFolderOpen(false);
       setNewFolderName('');
+      openBuilderProject(payload.redirectTo ?? null);
     } catch (error) {
       setLocalFolderError(error instanceof Error ? error.message : 'Failed to create folder.');
     } finally {
@@ -524,6 +540,7 @@ export default function BuilderPage() {
 
       setTemplateCreatedPath(payload.createdPath ?? null);
       setTemplateCreatedName(payload.templateName ?? null);
+      openBuilderProject(payload.redirectTo ?? null);
     } catch (error) {
       setTemplateError(error instanceof Error ? error.message : 'Failed to create template workspace.');
     } finally {
@@ -577,7 +594,12 @@ export default function BuilderPage() {
 
         for (const line of lines) {
           if (!line.trim()) continue;
-          const event = JSON.parse(line) as { type: string; message?: string; status?: string };
+          const event = JSON.parse(line) as {
+            type: string;
+            message?: string;
+            status?: string;
+            redirectTo?: string;
+          };
 
           if (event.message) {
             const message = event.message;
@@ -586,6 +608,7 @@ export default function BuilderPage() {
 
           if (event.type === 'done') {
             setSshStatus(event.status ?? 'connected');
+            openBuilderProject(event.redirectTo ?? null);
           }
 
           if (event.type === 'error') {
@@ -604,6 +627,23 @@ export default function BuilderPage() {
     (mode === 'local' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
     (mode === 'web' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
     (mode === 'ssh' && subView === 'zip');
+
+  const handleEmptyStart = async () => {
+    try {
+      const response = await fetch('/api/builder/project/empty', {
+        method: 'POST',
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload?.error ?? 'Failed to create empty builder project.');
+      }
+
+      openBuilderProject(payload.redirectTo ?? null);
+    } catch (error) {
+      setTemplateError(error instanceof Error ? error.message : 'Failed to create empty builder project.');
+    }
+  };
 
   return (
     <div className="relative flex h-dvh w-full flex-col items-center overflow-hidden bg-background">
@@ -778,10 +818,13 @@ export default function BuilderPage() {
                           Pull in a repository, start from a template, or import a zipped project to continue building online.
                         </p>
                       </div>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                      <div className={cn('grid grid-cols-1 gap-2', isDevMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
                         <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
                         <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
                         <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
+                        {isDevMode ? (
+                          <ActionButton icon={Layers3} label="Empty Start" onClick={() => void handleEmptyStart()} />
+                        ) : null}
                       </div>
 
                       {(templateCreatedName || templateCreatedPath) && (

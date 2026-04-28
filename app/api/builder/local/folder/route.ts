@@ -2,6 +2,8 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { auth } from '@/lib/auth';
+import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 export const runtime = 'nodejs';
 
@@ -41,6 +43,12 @@ async function ensureUniqueFolder(baseDir: string, folderName: string) {
 }
 
 export async function POST(request: Request) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const parsed = createFolderSchema.safeParse(await request.json());
 
   if (!parsed.success) {
@@ -56,12 +64,26 @@ export async function POST(request: Request) {
     const rootDir = path.join(tmpdir(), 'indexblue-builder-workspaces', 'local', parsed.data.space);
     await mkdir(rootDir, { recursive: true });
     const createdPath = await ensureUniqueFolder(rootDir, safeFolderName);
+    const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+      userId: session.user.id,
+      sourceType: 'local',
+      workspacePath: createdPath,
+      fallbackName: safeFolderName,
+      metadata: {
+        sourceLabel: 'Local Workspace',
+        importMeta: {
+          space: parsed.data.space,
+        },
+      },
+    });
 
     return Response.json({
       ok: true,
       folderName: path.basename(createdPath),
       createdPath,
       space: parsed.data.space,
+      projectId: project.id,
+      redirectTo,
     });
   } catch (error) {
     return Response.json(

@@ -279,6 +279,12 @@ export type DataBuildSearchPart = {
         exitCode?: number;
       }
     | {
+        kind: 'exec_output';
+        execId: string;
+        chunk: string;
+        stream: 'stdout' | 'stderr';
+      }
+    | {
         kind: 'write';
         writeId: string;
         path: string;

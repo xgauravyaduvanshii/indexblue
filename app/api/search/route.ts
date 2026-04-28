@@ -31,6 +31,7 @@ import {
 import {
   createStreamId,
   getChatByIdForValidation,
+  getBuildSessionByChatId,
   getLatestStreamIdByChatId,
   getLatestUserMessageIdByChatId,
   getMessagesByChatId,
@@ -41,6 +42,7 @@ import {
   incrementAnthropicUsage,
   incrementGoogleUsage,
   updateChatTitleById,
+  updateBuildSession,
 } from '@/lib/db/queries';
 import { ChatSDKError } from '@/lib/errors';
 import { after } from 'next/server';
@@ -66,6 +68,8 @@ import { unauthenticatedRateLimit, getClientIdentifier } from '@/lib/rate-limit'
 import { loadConfiguredTools } from '@/lib/search/tool-loader';
 import { CohereChatModelOptions } from '@ai-sdk/cohere';
 import { xai } from '@ai-sdk/xai';
+import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
+import { createBuildTools } from '@/lib/tools';
 
 interface CriticalChecksResult {
   canProceed: boolean;
@@ -416,6 +420,7 @@ export async function POST(req: Request) {
     isAutoRouted,
     autoRouterEnabled,
     autoRouterConfig,
+    builderProjectId,
   } = await req.json();
   recordTiming('parse_request_body', opStart);
 
@@ -470,10 +475,30 @@ export async function POST(req: Request) {
   const lightweightUser = await lightweightUserPromise;
   recordTiming('get_lightweight_user', opStart);
 
+  if (builderProjectId && !lightweightUser) {
+    return new ChatSDKError('unauthorized:auth', 'Authentication required to use builder projects').toResponse();
+  }
+
+  let builderProjectContext:
+    | Awaited<ReturnType<typeof getBuilderProjectByIdForUser>>
+    | null = null;
+
+  if (builderProjectId && lightweightUser) {
+    builderProjectContext = await getBuilderProjectByIdForUser({
+      projectId: String(builderProjectId),
+      userId: lightweightUser.userId,
+    });
+
+    if (!builderProjectContext) {
+      return new ChatSDKError('not_found:database', 'Builder project not found').toResponse();
+    }
+  }
+
   // Start full user fetch immediately (doesn't block early exits)
   const isProUser = lightweightUser?.isProUser ?? false;
   const isMaxUser = lightweightUser?.isMaxUser ?? false;
   const shouldUseXaiMultiAgent = group === 'multi-agent' && isProUser;
+  const isBuilderProjectMode = Boolean(builderProjectContext);
   opStart = Date.now();
   const fullUserPromise = lightweightUser ? getCurrentUser() : Promise.resolve(null);
   recordTiming('create_full_user_promise', opStart);
@@ -842,12 +867,12 @@ export async function POST(req: Request) {
         ...activeTools,
         ...(group === 'mcp' || group === 'extreme' ? dynamicMcpToolNames : []),
       ];
-      const streamActiveTools =
+      const baseStreamActiveTools =
         model === 'scira-qwen-coder-plus' || model === 'scira-qwen-3-vl' || model === 'scira-qwen-3-vl-thinking'
           ? [...configuredActiveTools].filter((tool) => tool !== 'code_interpreter')
           : [...configuredActiveTools];
       const loadedTools = await loadConfiguredTools({
-        activeToolNames: streamActiveTools,
+        activeToolNames: baseStreamActiveTools,
         dataStream,
         searchProvider,
         timezone,
@@ -858,14 +883,34 @@ export async function POST(req: Request) {
         lightweightUser,
         selectedConnectors,
       });
+      const buildSession = isBuilderProjectMode
+        ? await getBuildSessionByChatId({ chatId: id })
+        : null;
+      const buildToolkit =
+        isBuilderProjectMode && lightweightUser && builderProjectContext
+          ? createBuildTools(
+              dataStream,
+              lightweightUser.userId,
+              buildSession?.boxId ?? null,
+              [],
+              builderProjectContext.workspacePath ?? null,
+            )
+          : null;
+      const buildToolNames = buildToolkit ? Object.keys(buildToolkit.tools) : [];
+      const streamActiveTools = isBuilderProjectMode
+        ? Array.from(new Set([...baseStreamActiveTools, ...buildToolNames]))
+        : baseStreamActiveTools;
 
       const streamTools = shouldUseXaiMultiAgent
         ? {
+          ...loadedTools,
+          xai_web_search: xai.tools.webSearch(),
+          xai_x_search: xai.tools.xSearch(),
+        }
+        : {
             ...loadedTools,
-            xai_web_search: xai.tools.webSearch(),
-            xai_x_search: xai.tools.xSearch(),
-          }
-        : loadedTools;
+            ...(buildToolkit?.tools ?? {}),
+          };
 
       function setUsageMetadataFromUsage(
         usage:
@@ -961,7 +1006,7 @@ export async function POST(req: Request) {
         model: shouldUseXaiMultiAgent ? xai.responses('grok-4.20-multi-agent') : scira.languageModel(model),
         messages: processedMessages,
         ...getModelParameters(shouldUseXaiMultiAgent ? 'grok-4.20-multi-agent' : model),
-        stopWhen: stepCountIs(shouldUseXaiMultiAgent ? 5 : group === 'mcp' ? 50 : 5),
+        stopWhen: stepCountIs(shouldUseXaiMultiAgent ? 5 : group === 'mcp' || isBuilderProjectMode ? 50 : 5),
         ...(shouldUseXaiMultiAgent
           ? {}
           : model === 'scira-default' ||
@@ -975,10 +1020,13 @@ export async function POST(req: Request) {
             : {}),
         maxRetries: 10,
         abortSignal: abortController.signal,
-        activeTools: shouldUseXaiMultiAgent ? ['xai_web_search', 'xai_x_search'] : streamActiveTools,
+        activeTools: (shouldUseXaiMultiAgent ? ['xai_web_search', 'xai_x_search'] : streamActiveTools) as never[],
         experimental_transform: markdownJoinerTransform(),
         system:
           instructions +
+          (isBuilderProjectMode && builderProjectContext
+            ? `\n\nYou are working inside Indexblue Builder for the project "${builderProjectContext.name}". Treat this as a coding workspace.\nUse the build tools when code changes, previews, shell commands, or browser-based build research are needed.\nAlways initialize the sandbox with box_init before using other sandbox tools.\nIf a project workspace has been seeded, the imported files are available at /workspace/home/project.\nPrefer operating on that project directory when writing code, running installs, or starting previews.\nKeep your answers concise and execution-oriented.`
+            : '') +
           (customInstructions && (isCustomInstructionsEnabled ?? true)
             ? `\n\nThe user's custom instructions are as follows and YOU MUST FOLLOW THEM AT ALL COSTS: ${customInstructions?.content}`
             : '\n') +
@@ -1461,13 +1509,16 @@ export async function POST(req: Request) {
             Boolean(latestStep) && latestStep.toolCalls.length > 0 && latestStep.toolResults.length > 0;
 
           // MCP mode and xAI multi-agent mode: keep tools available across steps.
-          if (group === 'mcp' || shouldUseXaiMultiAgent) {
+          if (group === 'mcp' || shouldUseXaiMultiAgent || isBuilderProjectMode) {
             return shouldUseXaiMultiAgent
               ? {
                   toolChoice: 'auto' as const,
-                  activeTools: ['xai_web_search', 'xai_x_search'],
+                  activeTools: ['xai_web_search', 'xai_x_search'] as never[],
                 }
-              : undefined;
+              : {
+                  toolChoice: 'auto' as const,
+                  activeTools: streamActiveTools as never[],
+                };
           }
 
           // Other modes: disable tool calls after first completed tool round.
@@ -1477,13 +1528,13 @@ export async function POST(req: Request) {
           if (shouldDisableTools && model !== 'scira-sarvam-105b') {
             return {
               toolChoice: 'none' as const,
-              activeTools: [],
+              activeTools: [] as never[],
             };
           }
 
           return {
             toolChoice: 'auto' as const,
-            activeTools: streamActiveTools,
+            activeTools: streamActiveTools as never[],
           };
         },
 
@@ -1498,7 +1549,7 @@ export async function POST(req: Request) {
           console.log('parameterSchema', inputSchema);
           console.log('error', error);
 
-          const tool = tools[toolCall.toolName as keyof typeof tools];
+          const tool = (tools as Record<string, any>)[toolCall.toolName];
 
           if (!tool) {
             return null;
@@ -1539,6 +1590,15 @@ export async function POST(req: Request) {
         onAbort(event) {
           const processingTime = (Date.now() - streamStartTime) / 1000;
           setUsageMetadataFromSteps(event.steps, processingTime);
+          if (buildToolkit) {
+            updateBuildSession({
+              chatId: id,
+              status: 'error',
+              boxId: buildToolkit.getBoxId(),
+              runtime: buildToolkit.getRuntime(),
+            }).catch((error) => console.error('Failed to update build session on abort:', error));
+            buildToolkit.cleanup().catch((error) => console.error('Failed to cleanup build toolkit on abort:', error));
+          }
           closeMcpToolsSafe().catch(() => null);
         },
         onFinish: async (event) => {
@@ -1549,6 +1609,14 @@ export async function POST(req: Request) {
 
           try {
             if (lightweightUser?.userId && event.finishReason === 'stop') {
+              if (buildToolkit) {
+                await updateBuildSession({
+                  chatId: id,
+                  status: 'active',
+                  boxId: buildToolkit.getBoxId(),
+                  runtime: buildToolkit.getRuntime(),
+                });
+              }
               // Track usage synchronously - this is critical for billing and rate limiting
               try {
                 const shouldTrackMessageUsage = !shouldBypassRateLimits(model, lightweightUser);
@@ -1598,12 +1666,26 @@ export async function POST(req: Request) {
               }
             }
           } finally {
+            if (buildToolkit) {
+              await buildToolkit.cleanup().catch((error) => {
+                console.error('Failed to cleanup build toolkit:', error);
+              });
+            }
             await closeMcpToolsSafe();
           }
         },
         onError(event) {
           const processingTime = (Date.now() - requestStartTime) / 1000;
           console.error(`❌ Request failed: ${processingTime.toFixed(2)}s`, event.error);
+          if (buildToolkit) {
+            updateBuildSession({
+              chatId: id,
+              status: 'error',
+              boxId: buildToolkit.getBoxId(),
+              runtime: buildToolkit.getRuntime(),
+            }).catch((error) => console.error('Failed to update build session on error:', error));
+            buildToolkit.cleanup().catch((error) => console.error('Failed to cleanup build toolkit on error:', error));
+          }
           closeMcpToolsSafe().catch(() => null);
         },
       });

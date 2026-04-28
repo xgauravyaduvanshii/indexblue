@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { auth } from '@/lib/auth';
+import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 const execFileAsync = promisify(execFile);
 
@@ -49,6 +51,12 @@ async function buildTree(rootDir: string, currentDir = rootDir): Promise<TreeNod
 }
 
 export async function POST(request: Request) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const formData = await request.formData();
   const file = formData.get('file');
 
@@ -82,11 +90,25 @@ export async function POST(request: Request) {
     }
 
     const tree = await buildTree(extractedDir);
+    const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+      userId: session.user.id,
+      sourceType: 'zip',
+      workspacePath: extractedDir,
+      fallbackName: file.name.replace(/\.zip$/i, ''),
+      metadata: {
+        sourceLabel: 'ZIP Import',
+        importMeta: {
+          archiveName: file.name,
+        },
+      },
+    });
 
     return Response.json({
       extractedPath: extractedDir,
       archiveName: file.name,
       tree,
+      projectId: project.id,
+      redirectTo,
     });
   } catch (error) {
     return Response.json(

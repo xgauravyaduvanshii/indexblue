@@ -4,6 +4,8 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { auth } from '@/lib/auth';
+import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 export const runtime = 'nodejs';
 
@@ -54,6 +56,12 @@ function chunkToLines(buffer: string, chunk: Buffer | string) {
 }
 
 export async function POST(request: Request) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const parsed = sshSchema.safeParse(await request.json());
 
   if (!parsed.success) {
@@ -73,7 +81,29 @@ export async function POST(request: Request) {
         if (authMode === 'password') {
           emit(controller, { type: 'log', message: 'Checking server reachability for password auth...' });
           await runTcpProbe(host, port);
-          emit(controller, { type: 'done', message: 'Server is reachable. Password auth can be entered client-side on the next step.', status: 'reachable' });
+          const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+            userId: session.user.id,
+            sourceType: 'ssh',
+            workspacePath: null,
+            fallbackName: `${username}@${host}`,
+            metadata: {
+              sourceLabel: 'SSH Workspace',
+              sourceUrl: `ssh://${username}@${host}:${port}`,
+              importMeta: {
+                host,
+                port,
+                username,
+                authMode,
+              },
+            },
+          });
+          emit(controller, {
+            type: 'done',
+            message: 'Server is reachable. Password auth can be entered client-side on the next step.',
+            status: 'reachable',
+            projectId: project.id,
+            redirectTo,
+          });
           controller.close();
           return;
         }
@@ -150,7 +180,29 @@ export async function POST(request: Request) {
           }
 
           if (code === 0 && stdoutCapture.includes('indexblue-ssh-connected')) {
-            emit(controller, { type: 'done', message: 'SSH connection verified successfully.', status: 'connected' });
+            const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+              userId: session.user.id,
+              sourceType: 'ssh',
+              workspacePath: null,
+              fallbackName: `${username}@${host}`,
+              metadata: {
+                sourceLabel: 'SSH Workspace',
+                sourceUrl: `ssh://${username}@${host}:${port}`,
+                importMeta: {
+                  host,
+                  port,
+                  username,
+                  authMode,
+                },
+              },
+            });
+            emit(controller, {
+              type: 'done',
+              message: 'SSH connection verified successfully.',
+              status: 'connected',
+              projectId: project.id,
+              redirectTo,
+            });
           } else {
             emit(controller, {
               type: 'error',

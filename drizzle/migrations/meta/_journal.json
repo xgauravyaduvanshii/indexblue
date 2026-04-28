@@ -78,6 +78,20 @@
       "when": 1774120000000,
       "tag": "0010_steady_mister_fear",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1774200000000,
+      "tag": "0011_builder_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1774203600000,
+      "tag": "0012_build_session",
+      "breakpoints": true
     }
   ]
 }

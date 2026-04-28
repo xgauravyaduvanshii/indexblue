@@ -1,6 +1,6 @@
 import 'server-only';
 
-import { Agent, Box, ClaudeCode, type Runtime } from '@upstash/box';
+import { Box, type Runtime } from '@upstash/box';
 import { tool } from 'ai';
 import type { UIMessageStreamWriter } from 'ai';
 import { z } from 'zod';
@@ -8,8 +8,13 @@ import { nanoid } from 'nanoid';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME, R2_PUBLIC_URL } from '@/lib/r2';
 import { serverEnv } from '@/env/server';
-import { getUserMcpServersByUserId } from '@/lib/db/queries';
-import { resolveMcpAuthHeaders } from '@/lib/mcp/auth-headers';
+import {
+  BUILDER_REMOTE_PROJECT_PATH,
+  createBuilderBox,
+  installBunInBuilderBox,
+  reconnectBuilderBox,
+  seedBuilderWorkspace,
+} from '@/lib/builder/box';
 
 import { scrapeWebpageWithNotte } from '@/lib/notte';
 import type { ChatMessage } from '@/lib/types';
@@ -72,12 +77,7 @@ class BoxManager {
 
   private async reconnectBox(boxId: string): Promise<Box> {
     try {
-      const box = await Box.get(boxId, {
-        apiKey: serverEnv.UPSTASH_BOX_API_KEY!,
-      });
-      // Resume in case it was paused
-      await box.resume().catch(() => {});
-
+      const box = await reconnectBuilderBox(boxId);
       return box;
     } catch (err) {
       console.warn(`${LOG_PREFIX} Failed to reconnect to Box ${boxId}, creating new one:`, err);
@@ -87,44 +87,18 @@ class BoxManager {
   }
 
   private async initBox(): Promise<Box> {
-    const enabledServers = await getUserMcpServersByUserId({
+    const created = await createBuilderBox({
       userId: this.userId,
-      enabledOnly: true,
+      runtime: this.runtime,
     });
 
-    const mcpServerConfigs = await Promise.all(
-      enabledServers.map(async (server) => ({
-        name: server.name,
-        url: server.url,
-        headers: await resolveMcpAuthHeaders({ server, userId: this.userId }),
-      })),
-    );
-
-    this.mcpServerNames = [...mcpServerConfigs.map((s) => s.name)];
-    this._hasVercelMcp = enabledServers.some(
-      (s) => s.authType === 'oauth' && s.oauthAuthorizationUrl?.includes('vercel.com'),
-    );
+    this.mcpServerNames = [...created.mcpServerNames];
+    this._hasVercelMcp = created.hasVercelMcp;
     console.log(`${LOG_PREFIX} MCP servers: ${this.mcpServerNames.join(', ')}`);
     if (this._hasVercelMcp)
       console.log(`${LOG_PREFIX} Vercel MCP detected — agent will extract token from mcp-config.json`);
 
-    return Box.create({
-      apiKey: serverEnv.UPSTASH_BOX_API_KEY!,
-      runtime: this.runtime,
-      agent: {
-        model: ClaudeCode.Sonnet_4_6,
-        runner: Agent.ClaudeCode,
-      },
-      skills: [
-        'vercel-labs/skills/find-skills',
-        'anthropics/skills/frontend-design',
-        'vercel-labs/agent-skills/vercel-react-best-practices',
-        'vercel-labs/agent-skills/web-design-guidelines',
-        'shubhamsaboo/awesome-llm-apps/python-expert',
-        'fastapi/fastapi/fastapi',
-      ],
-      mcpServers: [{ name: 'web-search', package: '@anthropic/mcp-web-search' }, ...mcpServerConfigs],
-    });
+    return created.box;
   }
 
   getBoxId(): string | null {
@@ -169,19 +143,33 @@ function createBoxExecTool(dataStream: UIMessageStreamWriter<ChatMessage> | unde
       }
 
       try {
-        const run = await box.exec.command(command);
-        const stdout = run.result ?? '';
-        const status = run.status === 'completed' ? ('completed' as const) : ('error' as const);
+        const stream = await box.exec.stream(command);
+        let stdout = '';
+
+        for await (const chunk of stream) {
+          if (chunk.type === 'output') {
+            stdout += chunk.data;
+            if (dataStream) {
+              dataStream.write({
+                type: 'data-build_search',
+                data: { kind: 'exec_output', execId, chunk: chunk.data, stream: 'stdout' },
+              });
+            }
+          }
+        }
+
+        const exitCode = stream.exitCode ?? 0;
+        const status = exitCode === 0 ? ('completed' as const) : ('error' as const);
         console.log(`${LOG_PREFIX} [exec:${execId}] ${status} (${stdout.length} chars)`);
 
         if (dataStream) {
           dataStream.write({
             type: 'data-build_search',
-            data: { kind: 'exec', execId, command, status, stdout },
+            data: { kind: 'exec', execId, command, status, stdout, exitCode },
           });
         }
 
-        return { command, stdout, status };
+        return { command, stdout, status, exitCode };
       } catch (error) {
         const stderr = error instanceof Error ? error.message : String(error);
         console.error(`${LOG_PREFIX} [exec:${execId}] Error:`, stderr);
@@ -864,6 +852,7 @@ function createBoxInitTool(
   dataStream: UIMessageStreamWriter<ChatMessage> | undefined,
   boxManager: BoxManager,
   uploadedFiles: UploadedFileContext[] = [],
+  seedWorkspacePath?: string | null,
 ) {
   return tool({
     description:
@@ -887,13 +876,12 @@ function createBoxInitTool(
 
       // Install Bun and fetch uploaded files in parallel — both happen during init so no tokens wasted later
       const downloadedPaths: Array<{ name: string; path: string; mediaType: string }> = [];
+      let seededWorkspace = false;
 
       const installBun = async () => {
         try {
           console.log(`${LOG_PREFIX} [init:${toolCallId}] Installing Bun...`);
-          await box.exec.command(
-            'curl -fsSL https://bun.sh/install | bash && ln -sf "$HOME/.bun/bin/bun" /usr/local/bin/bun 2>/dev/null || true',
-          );
+          await installBunInBuilderBox(box);
           console.log(`${LOG_PREFIX} [init:${toolCallId}] Bun installed`);
         } catch (err) {
           console.warn(`${LOG_PREFIX} [init:${toolCallId}] Bun install failed (non-fatal):`, err);
@@ -946,13 +934,27 @@ function createBoxInitTool(
         );
       };
 
+      const seedWorkspace = async () => {
+        if (!seedWorkspacePath) return;
+
+        try {
+          seededWorkspace = await seedBuilderWorkspace(box, seedWorkspacePath);
+          console.log(`${LOG_PREFIX} [init:${toolCallId}] Seeded workspace from ${seedWorkspacePath}`);
+        } catch (error) {
+          console.error(`${LOG_PREFIX} [init:${toolCallId}] Failed to seed workspace:`, error);
+        }
+      };
+
       // Run Bun install and file uploads in parallel
-      await Promise.all([installBun(), writeUploadedFiles()]);
+      await Promise.all([installBun(), writeUploadedFiles(), seedWorkspace()]);
 
       const filesNote =
         downloadedPaths.length > 0
           ? `\nUploaded files are available in the sandbox:\n${downloadedPaths.map((f) => `  ${f.path} (${f.mediaType})`).join('\n')}`
           : '';
+      const workspaceNote = seededWorkspace
+        ? '\nThe imported project workspace is available at /workspace/home/project.'
+        : '';
 
       if (dataStream) {
         dataStream.write({
@@ -962,7 +964,7 @@ function createBoxInitTool(
             execId: toolCallId,
             command: `# Environment: ${runtime}`,
             status: 'completed',
-            stdout: `${reason}\nBox ID: ${box.id}\nBun installed at /usr/local/bin/bun${filesNote}`,
+            stdout: `${reason}\nBox ID: ${box.id}\nBun installed at /usr/local/bin/bun${workspaceNote}${filesNote}`,
           },
         });
       }
@@ -970,8 +972,9 @@ function createBoxInitTool(
       return {
         boxId: box.id,
         runtime,
-        message: `Sandbox ready (${runtime}). Bun installed. ${reason}${filesNote}`,
+        message: `Sandbox ready (${runtime}). Bun installed. ${reason}${workspaceNote}${filesNote}`,
         ...(downloadedPaths.length > 0 ? { uploadedFiles: downloadedPaths } : {}),
+        ...(seededWorkspace ? { workspacePath: BUILDER_REMOTE_PROJECT_PATH } : {}),
       };
     },
   });
@@ -982,11 +985,12 @@ export function createBuildTools(
   userId: string,
   existingBoxId?: string | null,
   uploadedFiles: UploadedFileContext[] = [],
+  seedWorkspacePath?: string | null,
 ) {
   const boxManager = new BoxManager(userId, existingBoxId);
 
   const tools = {
-    box_init: createBoxInitTool(dataStream, boxManager, uploadedFiles),
+    box_init: createBoxInitTool(dataStream, boxManager, uploadedFiles, seedWorkspacePath),
     build_web_search: createBuildWebSearchTool(dataStream),
     box_exec: createBoxExecTool(dataStream, boxManager),
     box_write_file: createBoxWriteFileTool(dataStream, boxManager),

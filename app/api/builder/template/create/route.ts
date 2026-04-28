@@ -2,6 +2,8 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
+import { auth } from '@/lib/auth';
+import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 export const runtime = 'nodejs';
 
@@ -128,6 +130,12 @@ async function writeTemplateFiles(rootDir: string, files: Record<string, string>
 }
 
 export async function POST(request: Request) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   const parsed = templateSchema.safeParse(await request.json());
 
   if (!parsed.success) {
@@ -139,12 +147,27 @@ export async function POST(request: Request) {
     const baseDir = path.join(tmpdir(), 'indexblue-builder-workspaces', 'web-templates', `${template.slug}-${Date.now()}`);
     await mkdir(baseDir, { recursive: true });
     await writeTemplateFiles(baseDir, template.files);
+    const { project, redirectTo } = await createBuilderProjectFromWorkspace({
+      userId: session.user.id,
+      sourceType: 'template',
+      workspacePath: baseDir,
+      fallbackName: template.name,
+      metadata: {
+        sourceLabel: 'Template',
+        importMeta: {
+          templateId: parsed.data.templateId,
+          templateSlug: template.slug,
+        },
+      },
+    });
 
     return Response.json({
       ok: true,
       templateId: parsed.data.templateId,
       templateName: template.name,
       createdPath: baseDir,
+      projectId: project.id,
+      redirectTo,
     });
   } catch (error) {
     return Response.json(

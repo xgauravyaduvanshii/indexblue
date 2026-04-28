@@ -16,6 +16,7 @@ import {
 import { generateId } from 'ai';
 import { InferSelectModel } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
+import type { BuilderCanvasState } from '@/lib/builder/canvas';
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -98,6 +99,47 @@ export const builderGithubRepoSelection = pgTable(
   (table) => [
     index('builderGithubRepoSelection_userId_idx').on(table.userId),
     uniqueIndex('builderGithubRepoSelection_userId_unique').on(table.userId),
+  ],
+);
+
+export const builderProject = pgTable(
+  'builder_project',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    chatId: text('chat_id')
+      .notNull()
+      .references(() => chat.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    sourceType: text('source_type').notNull(),
+    workspacePath: text('workspace_path'),
+    theme: text('theme'),
+    metadata: jsonb('metadata')
+      .$type<{
+        sourceLabel?: string;
+        sourceUrl?: string;
+        sourceBranch?: string | null;
+        importMeta?: Record<string, unknown>;
+        panelState?: {
+          activeTab?: 'preview' | 'code' | 'canvas' | 'more';
+        };
+        canvas?: BuilderCanvasState;
+      }>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('builderProject_userId_idx').on(table.userId),
+    index('builderProject_chatId_idx').on(table.chatId),
   ],
 );
 
@@ -672,9 +714,21 @@ export const buildSessionRelations = relations(buildSession, ({ one }) => ({
   }),
 }));
 
+export const builderProjectRelations = relations(builderProject, ({ one }) => ({
+  chat: one(chat, {
+    fields: [builderProject.chatId],
+    references: [chat.id],
+  }),
+  user: one(user, {
+    fields: [builderProject.userId],
+    references: [user.id],
+  }),
+}));
+
 export type User = InferSelectModel<typeof user>;
 export type Session = InferSelectModel<typeof session>;
 export type Account = InferSelectModel<typeof account>;
+export type BuilderProject = InferSelectModel<typeof builderProject>;
 export type Verification = InferSelectModel<typeof verification>;
 export type Chat = InferSelectModel<typeof chat>;
 export type Message = InferSelectModel<typeof message>;
