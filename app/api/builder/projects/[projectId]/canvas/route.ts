@@ -13,6 +13,7 @@ const canvasRequestSchema = z.object({
   themeId: z.string().optional(),
   selectedFilePath: z.string().nullable().optional(),
   selectedFileContent: z.string().nullable().optional(),
+  selectedCanvasContext: z.string().nullable().optional(),
   selectedFrame: z
     .object({
       id: z.string().optional(),
@@ -63,13 +64,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: 'Project not found' }, { status: 404 });
   }
 
-  const { prompt, mode, selectedFilePath, selectedFileContent, selectedFrame } = parsed.data;
+  const { prompt, mode, selectedFilePath, selectedFileContent, selectedCanvasContext, selectedFrame } = parsed.data;
 
   const projectContext = [
     `Project: ${project.name}`,
     `Source type: ${project.sourceType}`,
     project.workspacePath ? `Workspace available: yes` : `Workspace available: no`,
     selectedFilePath ? `Focused file: ${selectedFilePath}` : null,
+    selectedCanvasContext ? `Canvas selection attached: yes` : null,
     selectedFrame ? `Selected frame title: ${selectedFrame.title}` : null,
     selectedFrame ? `Selected frame kind: ${selectedFrame.kind}` : null,
   ]
@@ -83,6 +85,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const selectedFrameBlock = selectedFrame
     ? `\nExisting frame:\n<existing_frame title="${selectedFrame.title}" kind="${selectedFrame.kind}">\n${trimContext(selectedFrame.source)}\n</existing_frame>\n`
+    : '';
+  const selectedCanvasBlock = selectedCanvasContext
+    ? `\nSelected canvas items:\n<selected_canvas>\n${trimContext(selectedCanvasContext, 4000)}\n</selected_canvas>\n`
     : '';
 
   const system = `You create polished visual app screens for a builder canvas.
@@ -100,6 +105,7 @@ Rules:
 - Make the result visually rich and production-grade.
 - Prefer desktop app / dashboard / landing-section style layouts that look great inside a 420px wide device frame.
 - Keep spacing intentional and avoid generic boilerplate.
+- If selected canvas items are provided, use them as concrete visual context for the new result.
 - If mode is regenerate, preserve the original screen's intent while applying the user's requested changes.`;
 
   const userPrompt = `
@@ -108,6 +114,7 @@ Mode: ${mode}
 Project context:
 ${projectContext}
 ${selectedFileBlock}
+${selectedCanvasBlock}
 ${selectedFrameBlock}
 
 User request:
@@ -123,7 +130,8 @@ ${prompt}
       maxOutputTokens: 5000,
     });
 
-    const title = extractTaggedBlock(text, 'title') || (mode === 'regenerate' ? selectedFrame?.title : null) || 'Canvas Frame';
+    const title =
+      extractTaggedBlock(text, 'title') || (mode === 'regenerate' ? selectedFrame?.title : null) || 'Canvas Frame';
     const htmlBlock = extractTaggedBlock(text, 'canvas_html') || stripCodeFence(text);
 
     if (!htmlBlock) {

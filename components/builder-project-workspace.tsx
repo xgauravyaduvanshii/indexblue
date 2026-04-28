@@ -2073,6 +2073,7 @@ function WorkbenchPane({
 }) {
   const [fileQuery, setFileQuery] = useState('');
   const terminalEndRef = useRef<HTMLDivElement>(null);
+  const terminalInputRef = useRef<HTMLInputElement>(null);
   const activeTerminal = useMemo(
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? terminals[0] ?? null,
     [activeTerminalId, terminals],
@@ -2602,78 +2603,69 @@ function WorkbenchPane({
                           + New
                         </button>
                       </div>
-
-                      {activeTerminal?.boxId ? (
-                        <div className="hidden shrink-0 rounded-full border border-white/8 bg-white/5 px-2.5 py-1 text-[11px] text-white/35 sm:block">
-                          Box {activeTerminal.boxId.slice(0, 8)}
-                        </div>
-                      ) : null}
                     </div>
 
                     <div className="min-h-0 flex-1 overflow-hidden">
-                      <ScrollArea className="h-full">
-                        <div className="min-h-full px-4 py-4">
-                          {!activeTerminal || activeTerminal.output.length === 0 ? (
-                            <div className="font-mono text-[12px] text-white/30">
-                              <div>{formatTerminalPrompt(activeTerminal?.cwd ?? DEFAULT_REMOTE_TERMINAL_ROOT)}</div>
+                      <ScrollArea className="h-full" onClick={() => terminalInputRef.current?.focus()}>
+                        <div className="min-h-full bg-[#0d0d0d] px-4 py-4">
+                          {activeTerminal?.commandError ? (
+                            <div className="mb-3 font-mono text-[12px] leading-6 text-red-300/85">
+                              [terminal error] {activeTerminal.commandError}
                             </div>
-                          ) : (
+                          ) : null}
+
+                          {activeTerminal?.output ? (
                             <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[12px] leading-6 text-white/78">
                               <code>{activeTerminal.output}</code>
                             </pre>
-                          )}
+                          ) : null}
+
+                          <div className="flex items-center gap-2 font-mono text-[12px] leading-6 text-white/88">
+                            <span className="shrink-0 text-sky-300/80">
+                              {formatTerminalPrompt(activeTerminal?.cwd ?? DEFAULT_REMOTE_TERMINAL_ROOT)}
+                            </span>
+                            <input
+                              ref={terminalInputRef}
+                              value={activeTerminal?.input ?? ''}
+                              onChange={(event) => onTerminalInputChange(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter' && !event.shiftKey) {
+                                  event.preventDefault();
+                                  void onRunTerminalCommand(undefined, activeTerminal?.id ?? undefined);
+                                  return;
+                                }
+
+                                if (event.key === 'ArrowUp') {
+                                  event.preventDefault();
+                                  onTerminalHistoryNavigate('up', activeTerminal?.id ?? undefined);
+                                  return;
+                                }
+
+                                if (event.key === 'ArrowDown') {
+                                  event.preventDefault();
+                                  onTerminalHistoryNavigate('down', activeTerminal?.id ?? undefined);
+                                }
+                              }}
+                              className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-white outline-none"
+                              spellCheck={false}
+                              autoCapitalize="off"
+                              autoCorrect="off"
+                            />
+                            {activeTerminal?.isRunning ? (
+                              <button
+                                type="button"
+                                onClick={() => onStopTerminalCommand(activeTerminal.id)}
+                                className="rounded-md p-1 text-white/40 transition hover:bg-white/6 hover:text-white"
+                                title="Stop command"
+                              >
+                                <Square className="size-3.5" />
+                              </button>
+                            ) : null}
+                          </div>
+
                           <div ref={terminalEndRef} />
                         </div>
                       </ScrollArea>
-                    </div>
-
-                    <div className="border-t border-white/8 bg-[#0d0d0d] px-3 py-2.5">
-                      {activeTerminal?.commandError ? (
-                        <div className="mb-2 rounded-lg border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-                          {activeTerminal.commandError}
-                        </div>
-                      ) : null}
-
-                      <div className="flex items-center gap-2 rounded-xl border border-white/8 bg-[#101010] px-3 py-2">
-                        <div className="shrink-0 font-mono text-[11px] text-sky-300/80">
-                          {formatTerminalPrompt(activeTerminal?.cwd ?? DEFAULT_REMOTE_TERMINAL_ROOT)}
-                        </div>
-                        <input
-                          value={activeTerminal?.input ?? ''}
-                          onChange={(event) => onTerminalInputChange(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === 'Enter' && !event.shiftKey) {
-                              event.preventDefault();
-                              void onRunTerminalCommand(undefined, activeTerminal?.id ?? undefined);
-                              return;
-                            }
-
-                            if (event.key === 'ArrowUp') {
-                              event.preventDefault();
-                              onTerminalHistoryNavigate('up', activeTerminal?.id ?? undefined);
-                              return;
-                            }
-
-                            if (event.key === 'ArrowDown') {
-                              event.preventDefault();
-                              onTerminalHistoryNavigate('down', activeTerminal?.id ?? undefined);
-                            }
-                          }}
-                          placeholder=""
-                          className="min-w-0 flex-1 bg-transparent font-mono text-sm text-white outline-none"
-                          spellCheck={false}
-                        />
-                        {activeTerminal?.isRunning ? (
-                          <button
-                            type="button"
-                            onClick={() => onStopTerminalCommand(activeTerminal.id)}
-                            className="rounded-md p-1.5 text-white/40 transition hover:bg-white/6 hover:text-white"
-                            title="Stop command"
-                          >
-                            <Square className="size-3.5" />
-                          </button>
-                        ) : null}
-                      </div>
                     </div>
                   </div>
                 ) : (

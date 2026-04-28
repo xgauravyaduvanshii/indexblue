@@ -38,6 +38,48 @@ const canvasDeletedFrameSchema = z.object({
   reason: z.enum(['manual', 'replace']).optional(),
 });
 
+const canvasPointSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+});
+
+const canvasDrawingSchema = z.discriminatedUnion('kind', [
+  z.object({
+    id: z.string(),
+    kind: z.literal('shape'),
+    shape: z.enum(['rectangle', 'square', 'circle', 'diamond', 'triangle']),
+    x: z.number(),
+    y: z.number(),
+    width: z.number(),
+    height: z.number(),
+    color: z.string(),
+    fill: z.string(),
+    strokeWidth: z.number(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('arrow'),
+    arrow: z.enum(['line', 'double', 'dashed', 'elbow']),
+    start: canvasPointSchema,
+    end: canvasPointSchema,
+    color: z.string(),
+    strokeWidth: z.number(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  }),
+  z.object({
+    id: z.string(),
+    kind: z.literal('path'),
+    points: z.array(canvasPointSchema),
+    color: z.string(),
+    strokeWidth: z.number(),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  }),
+]);
+
 const updateProjectSchema = z.object({
   theme: z.string().nullable().optional(),
   metadata: z
@@ -56,6 +98,8 @@ const updateProjectSchema = z.object({
           themeId: z.string().nullable().optional(),
           frames: z.array(canvasFrameSchema).optional(),
           deletedFrames: z.array(canvasDeletedFrameSchema).optional(),
+          drawings: z.array(canvasDrawingSchema).optional(),
+          drawColor: z.string().nullable().optional(),
         })
         .optional(),
     })

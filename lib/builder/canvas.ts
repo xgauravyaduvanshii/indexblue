@@ -37,10 +37,54 @@ export type BuilderCanvasDeletedFrame = {
   reason?: 'manual' | 'replace';
 };
 
+export type BuilderCanvasShapeKind = 'rectangle' | 'square' | 'circle' | 'diamond' | 'triangle';
+export type BuilderCanvasArrowKind = 'line' | 'double' | 'dashed' | 'elbow';
+
+export type BuilderCanvasPoint = {
+  x: number;
+  y: number;
+};
+
+type BuilderCanvasDrawingBase = {
+  id: string;
+  createdAt: number;
+  updatedAt: number;
+  color: string;
+};
+
+export type BuilderCanvasShapeDrawing = BuilderCanvasDrawingBase & {
+  kind: 'shape';
+  shape: BuilderCanvasShapeKind;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+  strokeWidth: number;
+};
+
+export type BuilderCanvasArrowDrawing = BuilderCanvasDrawingBase & {
+  kind: 'arrow';
+  arrow: BuilderCanvasArrowKind;
+  start: BuilderCanvasPoint;
+  end: BuilderCanvasPoint;
+  strokeWidth: number;
+};
+
+export type BuilderCanvasPathDrawing = BuilderCanvasDrawingBase & {
+  kind: 'path';
+  points: BuilderCanvasPoint[];
+  strokeWidth: number;
+};
+
+export type BuilderCanvasDrawing = BuilderCanvasShapeDrawing | BuilderCanvasArrowDrawing | BuilderCanvasPathDrawing;
+
 export type BuilderCanvasState = {
   themeId?: string | null;
   frames?: BuilderCanvasFrame[];
   deletedFrames?: BuilderCanvasDeletedFrame[];
+  drawings?: BuilderCanvasDrawing[];
+  drawColor?: string | null;
 };
 
 export type BuilderCanvasTheme = {
@@ -311,6 +355,45 @@ export function createBuilderCanvasDeletedFrame(frame: BuilderCanvasFrame, reaso
   } satisfies BuilderCanvasDeletedFrame;
 }
 
+function clampDimension(value: number) {
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function normalizeBuilderCanvasDrawing(drawing: BuilderCanvasDrawing): BuilderCanvasDrawing {
+  if (drawing.kind === 'shape') {
+    return {
+      ...drawing,
+      width: clampDimension(drawing.width),
+      height: clampDimension(drawing.height),
+      strokeWidth: clampDimension(drawing.strokeWidth) || 2,
+    };
+  }
+
+  if (drawing.kind === 'arrow') {
+    return {
+      ...drawing,
+      strokeWidth: clampDimension(drawing.strokeWidth) || 2,
+      start: {
+        x: clampDimension(drawing.start.x),
+        y: clampDimension(drawing.start.y),
+      },
+      end: {
+        x: clampDimension(drawing.end.x),
+        y: clampDimension(drawing.end.y),
+      },
+    };
+  }
+
+  return {
+    ...drawing,
+    strokeWidth: clampDimension(drawing.strokeWidth) || 2.5,
+    points: drawing.points.map((point) => ({
+      x: clampDimension(point.x),
+      y: clampDimension(point.y),
+    })),
+  };
+}
+
 export function normalizeBuilderCanvasState(state?: BuilderCanvasState | null): BuilderCanvasState {
   return {
     themeId: state?.themeId ?? BUILDER_CANVAS_THEMES[0].id,
@@ -320,6 +403,8 @@ export function normalizeBuilderCanvasState(state?: BuilderCanvasState | null): 
       reason: entry.reason ?? 'manual',
       frame: normalizeBuilderCanvasFrame(entry.frame),
     })),
+    drawings: (state?.drawings ?? []).map((drawing) => normalizeBuilderCanvasDrawing(drawing)),
+    drawColor: state?.drawColor ?? null,
   };
 }
 
