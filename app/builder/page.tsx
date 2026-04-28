@@ -21,6 +21,7 @@ import {
   Server,
   Settings2,
   Shapes,
+  Smartphone,
   Terminal,
   Upload,
 } from 'lucide-react';
@@ -30,7 +31,7 @@ import { Orb } from '@/components/ui/orb';
 import { signIn, useSession } from '@/lib/auth-client';
 import { cn } from '@/lib/utils';
 
-type BuilderMode = 'local' | 'web' | 'ssh';
+type BuilderMode = 'local' | 'web' | 'apps' | 'ssh';
 type SshAuthMode = 'config' | 'key' | 'password';
 type BuilderSubView = 'default' | 'git' | 'zip' | 'template';
 type FolderSpace = 'workspace' | 'projects' | 'sandbox';
@@ -49,7 +50,7 @@ type ZipTreeNode = {
   type: 'file' | 'folder';
   children?: ZipTreeNode[];
 };
-type TemplateId = 'next-app' | 'static-site' | 'node-api';
+type TemplateId = 'next-app' | 'static-site' | 'node-api' | 'expo-app';
 
 const SECTIONS = {
   local: {
@@ -75,6 +76,18 @@ const SECTIONS = {
       { icon: Cable, label: 'Connected web integrations' },
     ],
     colors: ['#5B6478', '#8AA4D6'] as [string, string],
+  },
+  apps: {
+    badge: 'Apps section',
+    title: 'Apps Builder',
+    description:
+      'Use the mobile app builder workspace for Expo, React Native, and app-like product flows with device-first preview and app development tools.',
+    features: [
+      { icon: Smartphone, label: 'Mobile-first preview and flows' },
+      { icon: Shapes, label: 'App starter templates' },
+      { icon: Terminal, label: 'Builder-driven app runtime work' },
+    ],
+    colors: ['#3F4D7A', '#7D7BDA'] as [string, string],
   },
   ssh: {
     badge: 'SSH section',
@@ -109,21 +122,31 @@ const TEMPLATE_OPTIONS: Array<{
   id: TemplateId;
   name: string;
   description: string;
+  modes: BuilderMode[];
 }> = [
   {
     id: 'next-app',
     name: 'Next App Starter',
     description: 'App Router scaffold for a new product workspace.',
+    modes: ['web'],
   },
   {
     id: 'static-site',
     name: 'Static Site',
     description: 'Simple HTML and CSS starter for quick web pages.',
+    modes: ['web'],
   },
   {
     id: 'node-api',
     name: 'Node API',
     description: 'Small server starter for API or backend experiments.',
+    modes: ['web'],
+  },
+  {
+    id: 'expo-app',
+    name: 'Expo Mobile Starter',
+    description: 'Expo Router starter for mobile app flows with a real app shell.',
+    modes: ['apps'],
   },
 ];
 
@@ -225,6 +248,11 @@ export default function BuilderPage() {
   };
 
   const openTemplateCard = () => {
+    if (mode === 'apps') {
+      setSelectedTemplateId('expo-app');
+    } else if (selectedTemplateId === 'expo-app') {
+      setSelectedTemplateId('next-app');
+    }
     setSubView('template');
     setTemplateError(null);
   };
@@ -235,7 +263,8 @@ export default function BuilderPage() {
   };
 
   useEffect(() => {
-    const shouldLoadRepos = subView === 'git' && (mode === 'local' || mode === 'web') && !!session?.user;
+    const shouldLoadRepos =
+      subView === 'git' && (mode === 'local' || mode === 'web' || mode === 'apps') && !!session?.user;
     if (!shouldLoadRepos) return;
 
     let ignore = false;
@@ -393,6 +422,9 @@ export default function BuilderPage() {
     try {
       const formData = new FormData();
       formData.append('file', zipFile);
+      if (mode) {
+        formData.append('mode', mode);
+      }
 
       const response = await fetch('/api/builder/zip/import', {
         method: 'POST',
@@ -457,9 +489,11 @@ export default function BuilderPage() {
   const handleOpenFolder = async () => {
     setLocalFolderError(null);
 
-    const picker = (window as Window & {
-      showDirectoryPicker?: () => Promise<{ name?: string }>;
-    }).showDirectoryPicker;
+    const picker = (
+      window as Window & {
+        showDirectoryPicker?: () => Promise<{ name?: string }>;
+      }
+    ).showDirectoryPicker;
 
     if (!picker) {
       setLocalFolderError('Directory picker is not available in this browser.');
@@ -512,10 +546,7 @@ export default function BuilderPage() {
     }
   };
 
-  const handleReadTextFile = async (
-    event: ChangeEvent<HTMLInputElement>,
-    onLoaded: (content: string) => void,
-  ) => {
+  const handleReadTextFile = async (event: ChangeEvent<HTMLInputElement>, onLoaded: (content: string) => void) => {
     const file = event.target.files?.[0];
     if (!file) return;
     onLoaded(await file.text());
@@ -530,7 +561,7 @@ export default function BuilderPage() {
       const response = await fetch('/api/builder/template/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ templateId: selectedTemplateId }),
+        body: JSON.stringify({ templateId: selectedTemplateId, mode }),
       });
       const payload = await response.json();
 
@@ -626,6 +657,7 @@ export default function BuilderPage() {
   const hideSectionIntro =
     (mode === 'local' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
     (mode === 'web' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
+    (mode === 'apps' && (subView === 'git' || subView === 'zip' || subView === 'template')) ||
     (mode === 'ssh' && subView === 'zip');
 
   const handleEmptyStart = async () => {
@@ -673,7 +705,9 @@ export default function BuilderPage() {
             <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
               <div className="flex flex-col gap-1">
                 <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
-                  <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">Builder modes</span>
+                  <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
+                    Builder modes
+                  </span>
                 </div>
                 <p className="text-sm font-medium text-foreground">Choose how you want to start</p>
                 <p className="text-xs leading-relaxed text-muted-foreground/70">
@@ -681,19 +715,39 @@ export default function BuilderPage() {
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <ModeButton icon={HardDrive} label="Local" onClick={() => {
-                  setMode('local');
-                  setSubView('default');
-                }} />
-                <ModeButton icon={AppWindow} label="Web" onClick={() => {
-                  setMode('web');
-                  setSubView('default');
-                }} />
-                <ModeButton icon={Terminal} label="SSH" onClick={() => {
-                  setMode('ssh');
-                  setSubView('default');
-                }} />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                <ModeButton
+                  icon={HardDrive}
+                  label="Local"
+                  onClick={() => {
+                    setMode('local');
+                    setSubView('default');
+                  }}
+                />
+                <ModeButton
+                  icon={AppWindow}
+                  label="Web"
+                  onClick={() => {
+                    setMode('web');
+                    setSubView('default');
+                  }}
+                />
+                <ModeButton
+                  icon={Smartphone}
+                  label="Apps"
+                  onClick={() => {
+                    setMode('apps');
+                    setSubView('default');
+                  }}
+                />
+                <ModeButton
+                  icon={Terminal}
+                  label="SSH"
+                  onClick={() => {
+                    setMode('ssh');
+                    setSubView('default');
+                  }}
+                />
               </div>
             </div>
           )}
@@ -815,7 +869,8 @@ export default function BuilderPage() {
                       <div className="flex flex-col gap-1">
                         <p className="text-xs font-medium text-foreground">Web builder actions</p>
                         <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                          Pull in a repository, start from a template, or import a zipped project to continue building online.
+                          Pull in a repository, start from a template, or import a zipped project to continue building
+                          online.
                         </p>
                       </div>
                       <div className={cn('grid grid-cols-1 gap-2', isDevMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
@@ -829,8 +884,12 @@ export default function BuilderPage() {
 
                       {(templateCreatedName || templateCreatedPath) && (
                         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
-                          {templateCreatedName && <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>}
-                          {templateCreatedPath && <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>}
+                          {templateCreatedName && (
+                            <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>
+                          )}
+                          {templateCreatedPath && (
+                            <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
+                          )}
                         </div>
                       )}
                     </>
@@ -858,6 +917,87 @@ export default function BuilderPage() {
 
                   {subView === 'template' && (
                     <TemplateCard
+                      mode={mode}
+                      selectedTemplateId={selectedTemplateId}
+                      onSelectTemplate={setSelectedTemplateId}
+                      templateError={templateError}
+                      isCreatingTemplate={isCreatingTemplate}
+                      templateCreatedPath={templateCreatedPath}
+                      onCreate={handleCreateTemplate}
+                      onBack={closeTemplateCard}
+                    />
+                  )}
+
+                  {subView === 'zip' && (
+                    <ZipImportCard
+                      zipFile={zipFile}
+                      setZipFile={setZipFile}
+                      zipImportError={zipImportError}
+                      zipArchiveName={zipArchiveName}
+                      zipExtractedPath={zipExtractedPath}
+                      zipTree={zipTree}
+                      isImportingZip={isImportingZip}
+                      onImport={handleZipImport}
+                      onBack={closeZipImportCard}
+                      onOpenPreview={() => setIsZipPreviewOpen(true)}
+                    />
+                  )}
+                </div>
+              )}
+
+              {mode === 'apps' && (
+                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
+                  {subView === 'default' && (
+                    <>
+                      <div className="flex flex-col gap-1">
+                        <p className="text-xs font-medium text-foreground">Mobile app builder actions</p>
+                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                          Bring in an Expo or React Native project, import a zipped mobile workspace, or start from a
+                          mobile template.
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                        <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
+                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
+                      </div>
+
+                      {(templateCreatedName || templateCreatedPath) && (
+                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                          {templateCreatedName && (
+                            <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>
+                          )}
+                          {templateCreatedPath && (
+                            <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {subView === 'git' && (
+                    <GitCloneCard
+                      sessionUser={!!session?.user}
+                      githubConnected={githubConnected}
+                      isLoadingRepos={isLoadingRepos}
+                      repoLoadError={repoLoadError}
+                      githubRepos={githubRepos}
+                      selectedRepoId={selectedRepoId}
+                      onSelectRepo={handleSelectRepo}
+                      repoUrl={repoUrl}
+                      onRepoUrlChange={setRepoUrl}
+                      cloneError={cloneError}
+                      cloneTargetDir={cloneTargetDir}
+                      cloneLogs={cloneLogs}
+                      isCloning={isCloning}
+                      onClone={handleCloneRepository}
+                      onBack={closeGitCloneCard}
+                    />
+                  )}
+
+                  {subView === 'template' && (
+                    <TemplateCard
+                      mode={mode}
                       selectedTemplateId={selectedTemplateId}
                       onSelectTemplate={setSelectedTemplateId}
                       templateError={templateError}
@@ -895,22 +1035,49 @@ export default function BuilderPage() {
                         <div className="flex flex-col gap-1">
                           <p className="text-xs font-medium text-foreground">SSH connection</p>
                           <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                            Enter your server details and test the connection with config, private key, or password mode.
+                            Enter your server details and test the connection with config, private key, or password
+                            mode.
                           </p>
                         </div>
 
                         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <InputField label="Host" value={sshHost} onChange={setSshHost} placeholder="example.server.com" />
+                          <InputField
+                            label="Host"
+                            value={sshHost}
+                            onChange={setSshHost}
+                            placeholder="example.server.com"
+                          />
                           <InputField label="Port" value={sshPort} onChange={setSshPort} placeholder="22" />
-                          <InputField label="Username" value={sshUsername} onChange={setSshUsername} placeholder="ubuntu" className="sm:col-span-2" />
+                          <InputField
+                            label="Username"
+                            value={sshUsername}
+                            onChange={setSshUsername}
+                            placeholder="ubuntu"
+                            className="sm:col-span-2"
+                          />
                         </div>
 
                         <div className="flex flex-col gap-2">
                           <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
                           <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                            <AuthButton active={sshAuthMode === 'config'} icon={Upload} label="Config File" onClick={() => setSshAuthMode('config')} />
-                            <AuthButton active={sshAuthMode === 'key'} icon={KeyRound} label="Private Key" onClick={() => setSshAuthMode('key')} />
-                            <AuthButton active={sshAuthMode === 'password'} icon={Lock} label="Password" onClick={() => setSshAuthMode('password')} />
+                            <AuthButton
+                              active={sshAuthMode === 'config'}
+                              icon={Upload}
+                              label="Config File"
+                              onClick={() => setSshAuthMode('config')}
+                            />
+                            <AuthButton
+                              active={sshAuthMode === 'key'}
+                              icon={KeyRound}
+                              label="Private Key"
+                              onClick={() => setSshAuthMode('key')}
+                            />
+                            <AuthButton
+                              active={sshAuthMode === 'password'}
+                              icon={Lock}
+                              label="Password"
+                              onClick={() => setSshAuthMode('password')}
+                            />
                           </div>
                         </div>
 
@@ -947,13 +1114,21 @@ export default function BuilderPage() {
                               placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
                               className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
                             />
-                            <InputField label="Optional passphrase" value={sshPassphrase} onChange={setSshPassphrase} placeholder="Passphrase" type="password" />
+                            <InputField
+                              label="Optional passphrase"
+                              value={sshPassphrase}
+                              onChange={setSshPassphrase}
+                              placeholder="Passphrase"
+                              type="password"
+                            />
                           </div>
                         )}
 
                         {sshAuthMode === 'password' && (
                           <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                            <p className="text-[11px] text-muted-foreground/80">Enter the server password for reachability checks.</p>
+                            <p className="text-[11px] text-muted-foreground/80">
+                              Enter the server password for reachability checks.
+                            </p>
                             <input
                               type="password"
                               value={sshPassword}
@@ -970,7 +1145,10 @@ export default function BuilderPage() {
                         {sshLogs.length > 0 && (
                           <div className="max-h-40 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
                             {sshLogs.map((log, index) => (
-                              <p key={`${log}-${index}`} className="text-[11px] leading-relaxed text-muted-foreground/80">
+                              <p
+                                key={`${log}-${index}`}
+                                className="text-[11px] leading-relaxed text-muted-foreground/80"
+                              >
                                 {log}
                               </p>
                             ))}
@@ -1062,13 +1240,17 @@ export default function BuilderPage() {
         <DialogContent className="!h-[92vh] !w-[98vw] !max-w-[1820px] overflow-hidden rounded-[40px] border border-border/60 bg-background/96 p-0 shadow-[0_40px_140px_rgba(0,0,0,0.42)] backdrop-blur-xl sm:rounded-[44px]">
           <div className="absolute inset-0 pointer-events-none bg-[radial-gradient(circle_at_top_left,hsl(var(--primary)/0.12),transparent_24%),radial-gradient(circle_at_top_right,hsl(var(--accent)/0.10),transparent_24%)]" />
           <DialogHeader className="relative border-b border-border/60 bg-card/70 px-5 py-4 sm:px-8 sm:py-5">
-            <DialogTitle className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">Extracted Files</DialogTitle>
+            <DialogTitle className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+              Extracted Files
+            </DialogTitle>
           </DialogHeader>
           <div className="relative grid h-[calc(92vh-69px)] gap-0 md:grid-cols-[minmax(340px,0.78fr)_minmax(0,1.22fr)]">
             <div className="border-b border-border/60 bg-card/35 p-4 sm:p-5 md:border-r md:border-b-0 md:p-6">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <div className="rounded-full border border-border/60 bg-background/80 px-3 py-1.5">
-                  <p className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-foreground/80 sm:text-xs">{zipArchiveName || 'ZIP Import'}</p>
+                  <p className="truncate text-[10px] font-medium uppercase tracking-[0.18em] text-foreground/80 sm:text-xs">
+                    {zipArchiveName || 'ZIP Import'}
+                  </p>
                 </div>
               </div>
               <div className="h-[36vh] overflow-y-auto rounded-[24px] border border-border/60 bg-background/80 p-3 shadow-inner scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent sm:h-[38vh] sm:rounded-[28px] sm:p-4 md:h-[calc(92vh-9.5rem)]">
@@ -1126,15 +1308,7 @@ export default function BuilderPage() {
   );
 }
 
-function ModeButton({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: typeof HardDrive;
-  label: string;
-  onClick: () => void;
-}) {
+function ModeButton({ icon: Icon, label, onClick }: { icon: typeof HardDrive; label: string; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -1147,15 +1321,7 @@ function ModeButton({
   );
 }
 
-function ActionButton({
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  icon: typeof HardDrive;
-  label: string;
-  onClick: () => void;
-}) {
+function ActionButton({ icon: Icon, label, onClick }: { icon: typeof HardDrive; label: string; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -1267,7 +1433,9 @@ function GitCloneCard({
           </div>
           <div>
             <p className="text-xs font-medium text-foreground">Clone Git Repo</p>
-            <p className="text-[11px] text-muted-foreground/70">Enter the repository URL and choose a connected repo if available.</p>
+            <p className="text-[11px] text-muted-foreground/70">
+              Enter the repository URL and choose a connected repo if available.
+            </p>
           </div>
         </div>
         <button
@@ -1356,6 +1524,7 @@ function GitCloneCard({
 }
 
 function TemplateCard({
+  mode,
   selectedTemplateId,
   onSelectTemplate,
   templateError,
@@ -1364,6 +1533,7 @@ function TemplateCard({
   onCreate,
   onBack,
 }: {
+  mode: BuilderMode;
   selectedTemplateId: TemplateId;
   onSelectTemplate: (value: TemplateId) => void;
   templateError: string | null;
@@ -1372,6 +1542,8 @@ function TemplateCard({
   onCreate: () => void;
   onBack: () => void;
 }) {
+  const filteredTemplates = TEMPLATE_OPTIONS.filter((template) => template.modes.includes(mode));
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
       <div className="flex items-center justify-between gap-2">
@@ -1381,7 +1553,11 @@ function TemplateCard({
           </div>
           <div>
             <p className="text-xs font-medium text-foreground">Templates</p>
-            <p className="text-[11px] text-muted-foreground/70">Create a starter workspace from a web template card.</p>
+            <p className="text-[11px] text-muted-foreground/70">
+              {mode === 'apps'
+                ? 'Create a starter workspace from a mobile app template.'
+                : 'Create a starter workspace from a web template card.'}
+            </p>
           </div>
         </div>
         <button
@@ -1394,7 +1570,7 @@ function TemplateCard({
       </div>
 
       <div className="max-h-52 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
-        {TEMPLATE_OPTIONS.map((template) => (
+        {filteredTemplates.map((template) => (
           <button
             key={template.id}
             type="button"
@@ -1460,7 +1636,9 @@ function ZipImportCard({
           </div>
           <div>
             <p className="text-xs font-medium text-foreground">Import ZIP</p>
-            <p className="text-[11px] text-muted-foreground/70">Upload a ZIP file, extract it, and inspect it in a popup.</p>
+            <p className="text-[11px] text-muted-foreground/70">
+              Upload a ZIP file, extract it, and inspect it in a popup.
+            </p>
           </div>
         </div>
         <button

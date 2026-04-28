@@ -16,7 +16,7 @@ import {
 import { generateId } from 'ai';
 import { InferSelectModel } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
-import type { BuilderCanvasState } from '@/lib/builder/canvas';
+import type { BuilderProjectMetadata } from '@/lib/builder/project-metadata';
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -118,19 +118,38 @@ export const builderProject = pgTable(
     sourceType: text('source_type').notNull(),
     workspacePath: text('workspace_path'),
     theme: text('theme'),
-    metadata: jsonb('metadata')
-      .$type<{
-        sourceLabel?: string;
-        sourceUrl?: string;
-        sourceBranch?: string | null;
-        importMeta?: Record<string, unknown>;
-        panelState?: {
-          activeTab?: 'preview' | 'code' | 'canvas' | 'more';
-        };
-        canvas?: BuilderCanvasState;
-      }>()
+    metadata: jsonb('metadata').$type<BuilderProjectMetadata>().notNull().default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index('builderProject_userId_idx').on(table.userId), index('builderProject_chatId_idx').on(table.chatId)],
+);
+
+export const builderProjectIntegration = pgTable(
+  'builder_project_integration',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
       .notNull()
-      .default({}),
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    provider: text('provider').notNull(),
+    status: text('status').notNull().default('disconnected'),
+    dashboardUrl: text('dashboard_url'),
+    webhookStatus: text('webhook_status'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    encryptedCredentials: text('encrypted_credentials'),
+    lastCheckedAt: timestamp('last_checked_at'),
+    lastCheckStatus: text('last_check_status'),
+    lastError: text('last_error'),
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at')
       .defaultNow()
@@ -138,8 +157,170 @@ export const builderProject = pgTable(
       .notNull(),
   },
   (table) => [
-    index('builderProject_userId_idx').on(table.userId),
-    index('builderProject_chatId_idx').on(table.chatId),
+    index('builderProjectIntegration_projectId_idx').on(table.projectId),
+    index('builderProjectIntegration_userId_idx').on(table.userId),
+    index('builderProjectIntegration_type_idx').on(table.type),
+    uniqueIndex('builderProjectIntegration_projectId_type_provider_unique').on(
+      table.projectId,
+      table.type,
+      table.provider,
+    ),
+  ],
+);
+
+export const builderProjectEnvVar = pgTable(
+  'builder_project_env_var',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    encryptedValue: text('encrypted_value').notNull(),
+    isSecret: boolean('is_secret').notNull().default(true),
+    source: text('source').notNull().default('manual'),
+    fileName: text('file_name').notNull().default('.env.local'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('builderProjectEnvVar_projectId_idx').on(table.projectId),
+    index('builderProjectEnvVar_userId_idx').on(table.userId),
+    uniqueIndex('builderProjectEnvVar_projectId_key_unique').on(table.projectId, table.key),
+  ],
+);
+
+export const builderProjectAsset = pgTable(
+  'builder_project_asset',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    sourceType: text('source_type').notNull(),
+    status: text('status').notNull().default('queued'),
+    name: text('name').notNull(),
+    prompt: text('prompt'),
+    storageUrl: text('storage_url'),
+    storageKey: text('storage_key'),
+    mimeType: text('mime_type'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    completedAt: timestamp('completed_at'),
+  },
+  (table) => [
+    index('builderProjectAsset_projectId_idx').on(table.projectId),
+    index('builderProjectAsset_userId_idx').on(table.userId),
+    index('builderProjectAsset_kind_idx').on(table.kind),
+    index('builderProjectAsset_status_idx').on(table.status),
+  ],
+);
+
+export const builderProjectJob = pgTable(
+  'builder_project_job',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    kind: text('kind').notNull(),
+    title: text('title').notNull(),
+    provider: text('provider'),
+    status: text('status').notNull().default('queued'),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    result: jsonb('result').$type<Record<string, unknown>>().notNull().default({}),
+    logs: jsonb('logs')
+      .$type<Array<{ message: string; level: 'info' | 'success' | 'warning' | 'error'; at: string }>>()
+      .notNull()
+      .default([]),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    completedAt: timestamp('completed_at'),
+  },
+  (table) => [
+    index('builderProjectJob_projectId_idx').on(table.projectId),
+    index('builderProjectJob_userId_idx').on(table.userId),
+    index('builderProjectJob_kind_idx').on(table.kind),
+    index('builderProjectJob_status_idx').on(table.status),
+  ],
+);
+
+export const builderProjectToolState = pgTable(
+  'builder_project_tool_state',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    toolId: text('tool_id').notNull(),
+    state: jsonb('state').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('builderProjectToolState_projectId_idx').on(table.projectId),
+    index('builderProjectToolState_userId_idx').on(table.userId),
+    uniqueIndex('builderProjectToolState_projectId_toolId_unique').on(table.projectId, table.toolId),
+  ],
+);
+
+export const builderProjectEvent = pgTable(
+  'builder_project_event',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    projectId: text('project_id')
+      .notNull()
+      .references(() => builderProject.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    channel: text('channel').notNull(),
+    type: text('type').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('builderProjectEvent_projectId_idx').on(table.projectId),
+    index('builderProjectEvent_projectId_createdAt_idx').on(table.projectId, table.createdAt),
+    index('builderProjectEvent_channel_idx').on(table.channel),
   ],
 );
 
@@ -608,6 +789,13 @@ export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
   chats: many(chat),
+  builderProjects: many(builderProject),
+  builderProjectIntegrations: many(builderProjectIntegration),
+  builderProjectEnvVars: many(builderProjectEnvVar),
+  builderProjectAssets: many(builderProjectAsset),
+  builderProjectJobs: many(builderProjectJob),
+  builderProjectToolStates: many(builderProjectToolState),
+  builderProjectEvents: many(builderProjectEvent),
   extremeSearchUsages: many(extremeSearchUsage),
   messageUsages: many(messageUsage),
   anthropicUsages: many(anthropicUsage),
@@ -714,7 +902,7 @@ export const buildSessionRelations = relations(buildSession, ({ one }) => ({
   }),
 }));
 
-export const builderProjectRelations = relations(builderProject, ({ one }) => ({
+export const builderProjectRelations = relations(builderProject, ({ one, many }) => ({
   chat: one(chat, {
     fields: [builderProject.chatId],
     references: [chat.id],
@@ -723,12 +911,90 @@ export const builderProjectRelations = relations(builderProject, ({ one }) => ({
     fields: [builderProject.userId],
     references: [user.id],
   }),
+  integrations: many(builderProjectIntegration),
+  envVars: many(builderProjectEnvVar),
+  assets: many(builderProjectAsset),
+  jobs: many(builderProjectJob),
+  toolStates: many(builderProjectToolState),
+  events: many(builderProjectEvent),
+}));
+
+export const builderProjectIntegrationRelations = relations(builderProjectIntegration, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectIntegration.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectIntegration.userId],
+    references: [user.id],
+  }),
+}));
+
+export const builderProjectEnvVarRelations = relations(builderProjectEnvVar, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectEnvVar.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectEnvVar.userId],
+    references: [user.id],
+  }),
+}));
+
+export const builderProjectAssetRelations = relations(builderProjectAsset, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectAsset.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectAsset.userId],
+    references: [user.id],
+  }),
+}));
+
+export const builderProjectJobRelations = relations(builderProjectJob, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectJob.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectJob.userId],
+    references: [user.id],
+  }),
+}));
+
+export const builderProjectToolStateRelations = relations(builderProjectToolState, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectToolState.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectToolState.userId],
+    references: [user.id],
+  }),
+}));
+
+export const builderProjectEventRelations = relations(builderProjectEvent, ({ one }) => ({
+  project: one(builderProject, {
+    fields: [builderProjectEvent.projectId],
+    references: [builderProject.id],
+  }),
+  user: one(user, {
+    fields: [builderProjectEvent.userId],
+    references: [user.id],
+  }),
 }));
 
 export type User = InferSelectModel<typeof user>;
 export type Session = InferSelectModel<typeof session>;
 export type Account = InferSelectModel<typeof account>;
 export type BuilderProject = InferSelectModel<typeof builderProject>;
+export type BuilderProjectIntegration = InferSelectModel<typeof builderProjectIntegration>;
+export type BuilderProjectEnvVar = InferSelectModel<typeof builderProjectEnvVar>;
+export type BuilderProjectAsset = InferSelectModel<typeof builderProjectAsset>;
+export type BuilderProjectJob = InferSelectModel<typeof builderProjectJob>;
+export type BuilderProjectToolState = InferSelectModel<typeof builderProjectToolState>;
+export type BuilderProjectEvent = InferSelectModel<typeof builderProjectEvent>;
 export type Verification = InferSelectModel<typeof verification>;
 export type Chat = InferSelectModel<typeof chat>;
 export type Message = InferSelectModel<typeof message>;

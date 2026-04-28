@@ -69,6 +69,8 @@ import { loadConfiguredTools } from '@/lib/search/tool-loader';
 import { CohereChatModelOptions } from '@ai-sdk/cohere';
 import { xai } from '@ai-sdk/xai';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
+import { BUILDER_REMOTE_PROJECT_PATH } from '@/lib/builder/paths';
+import { getBuilderProjectRemoteWorkspaceRoot } from '@/lib/builder/project-metadata';
 import { createBuildTools } from '@/lib/tools';
 
 interface CriticalChecksResult {
@@ -188,11 +190,7 @@ function initializeChatAndChecks({
         ) {
           throw new ChatSDKError('rate_limit:model', 'Daily Anthropic limit reached for Max users.');
         }
-        if (
-          isMaxGoogleModel &&
-          googleUsageResult.count !== undefined &&
-          googleUsageResult.count >= 80
-        ) {
+        if (isMaxGoogleModel && googleUsageResult.count !== undefined && googleUsageResult.count >= 80) {
           throw new ChatSDKError('rate_limit:model', 'Monthly Gemini limit reached for Max users.');
         }
 
@@ -292,11 +290,7 @@ function initializeChatAndChecks({
       ) {
         throw new ChatSDKError('rate_limit:model', 'Daily Anthropic limit reached for Max users.');
       }
-      if (
-        isMaxGoogleModel &&
-        googleUsageResult.count !== undefined &&
-        googleUsageResult.count >= 80
-      ) {
+      if (isMaxGoogleModel && googleUsageResult.count !== undefined && googleUsageResult.count >= 80) {
         throw new ChatSDKError('rate_limit:model', 'Monthly Gemini limit reached for Max users.');
       }
 
@@ -479,9 +473,7 @@ export async function POST(req: Request) {
     return new ChatSDKError('unauthorized:auth', 'Authentication required to use builder projects').toResponse();
   }
 
-  let builderProjectContext:
-    | Awaited<ReturnType<typeof getBuilderProjectByIdForUser>>
-    | null = null;
+  let builderProjectContext: Awaited<ReturnType<typeof getBuilderProjectByIdForUser>> | null = null;
 
   if (builderProjectId && lightweightUser) {
     builderProjectContext = await getBuilderProjectByIdForUser({
@@ -883,9 +875,10 @@ export async function POST(req: Request) {
         lightweightUser,
         selectedConnectors,
       });
-      const buildSession = isBuilderProjectMode
-        ? await getBuildSessionByChatId({ chatId: id })
-        : null;
+      const buildSession = isBuilderProjectMode ? await getBuildSessionByChatId({ chatId: id }) : null;
+      const builderRemoteWorkspaceRoot = builderProjectContext
+        ? getBuilderProjectRemoteWorkspaceRoot(builderProjectContext)
+        : BUILDER_REMOTE_PROJECT_PATH;
       const buildToolkit =
         isBuilderProjectMode && lightweightUser && builderProjectContext
           ? createBuildTools(
@@ -894,6 +887,7 @@ export async function POST(req: Request) {
               buildSession?.boxId ?? null,
               [],
               builderProjectContext.workspacePath ?? null,
+              builderRemoteWorkspaceRoot,
             )
           : null;
       const buildToolNames = buildToolkit ? Object.keys(buildToolkit.tools) : [];
@@ -903,10 +897,10 @@ export async function POST(req: Request) {
 
       const streamTools = shouldUseXaiMultiAgent
         ? {
-          ...loadedTools,
-          xai_web_search: xai.tools.webSearch(),
-          xai_x_search: xai.tools.xSearch(),
-        }
+            ...loadedTools,
+            xai_web_search: xai.tools.webSearch(),
+            xai_x_search: xai.tools.xSearch(),
+          }
         : {
             ...loadedTools,
             ...(buildToolkit?.tools ?? {}),
@@ -1025,7 +1019,7 @@ export async function POST(req: Request) {
         system:
           instructions +
           (isBuilderProjectMode && builderProjectContext
-            ? `\n\nYou are working inside Indexblue Builder for the project "${builderProjectContext.name}". Treat this as a coding workspace.\nUse the build tools when code changes, previews, shell commands, or browser-based build research are needed.\nAlways initialize the sandbox with box_init before using other sandbox tools.\nIf a project workspace has been seeded, the imported files are available at /workspace/home/project.\nPrefer operating on that project directory when writing code, running installs, or starting previews.\nKeep your answers concise and execution-oriented.`
+            ? `\n\nYou are working inside Indexblue Builder for the project "${builderProjectContext.name}". Treat this as a coding workspace.\nUse the build tools when code changes, previews, shell commands, or browser-based build research are needed.\nAlways initialize the sandbox with box_init before using other sandbox tools.\nIf a project workspace has been seeded, the imported files are available at ${builderRemoteWorkspaceRoot}.\nPrefer operating on that project directory when writing code, running installs, or starting previews.\nKeep your answers concise and execution-oriented.`
             : '') +
           (customInstructions && (isCustomInstructionsEnabled ?? true)
             ? `\n\nThe user's custom instructions are as follows and YOU MUST FOLLOW THEM AT ALL COSTS: ${customInstructions?.content}`
@@ -1626,8 +1620,7 @@ export async function POST(req: Request) {
                     step.toolCalls?.some((toolCall) => toolCall && toolCall.toolName === 'extreme_search'),
                   );
                 const shouldTrackAnthropicUsage = getModelProvider(model) === 'anthropic' && lightweightUser.isMaxUser;
-                const shouldTrackGoogleUsage =
-                  getModelProvider(model) === 'google' && lightweightUser.isMaxUser;
+                const shouldTrackGoogleUsage = getModelProvider(model) === 'google' && lightweightUser.isMaxUser;
 
                 if (
                   shouldTrackMessageUsage ||

@@ -1,6 +1,7 @@
 import 'server-only';
 
-import { BUILDER_BOX_ROOT, getDefaultBuilderRemoteCwd } from '@/lib/builder/box';
+import { getDefaultBuilderRemoteCwd } from '@/lib/builder/box';
+import { BUILDER_BOX_ROOT } from '@/lib/builder/paths';
 
 const TERMINAL_STATE_ROOT = `${BUILDER_BOX_ROOT}/.indexblue-terminal`;
 
@@ -20,8 +21,12 @@ export function getBuilderTerminalStatePaths(projectId: string, terminalId = 'de
   };
 }
 
-export function normalizeBuilderTerminalCwd(cwd: string | null | undefined, hasWorkspace: boolean) {
-  const fallback = getDefaultBuilderRemoteCwd(hasWorkspace);
+export function normalizeBuilderTerminalCwd(
+  cwd: string | null | undefined,
+  hasWorkspace: boolean,
+  fallbackCwd?: string,
+) {
+  const fallback = fallbackCwd?.trim() || getDefaultBuilderRemoteCwd(hasWorkspace);
   const trimmed = cwd?.trim();
 
   if (!trimmed || !trimmed.startsWith('/')) {

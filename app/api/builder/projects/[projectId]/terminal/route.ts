@@ -1,17 +1,22 @@
 import { NextRequest } from 'next/server';
-import type { Runtime } from '@upstash/box';
 import { auth } from '@/lib/auth';
-import { ensureBuilderBox, installBunInBuilderBox, seedBuilderWorkspace } from '@/lib/builder/box';
-import { createBuilderTerminalCommand, getBuilderTerminalStatePaths, normalizeBuilderTerminalCwd } from '@/lib/builder/terminal';
+import { type BuilderRuntime, ensureBuilderBox, installBunInBuilderBox, seedBuilderWorkspace } from '@/lib/builder/box';
+import { getBuilderProjectRemoteWorkspaceRoot } from '@/lib/builder/project-metadata';
+import { inferBuilderPreviewPort } from '@/lib/builder/preview';
+import {
+  createBuilderTerminalCommand,
+  getBuilderTerminalStatePaths,
+  normalizeBuilderTerminalCwd,
+} from '@/lib/builder/terminal';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 import { updateBuildSession } from '@/lib/db/queries';
 
 export const runtime = 'nodejs';
 
-const SUPPORTED_RUNTIMES = new Set<Runtime>(['node', 'python', 'golang', 'ruby', 'rust']);
+const SUPPORTED_RUNTIMES = new Set<BuilderRuntime>(['node', 'python', 'golang', 'ruby', 'rust']);
 
-function resolveRuntime(value: string | null | undefined): Runtime {
-  return value && SUPPORTED_RUNTIMES.has(value as Runtime) ? (value as Runtime) : 'node';
+function resolveRuntime(value: string | null | undefined): BuilderRuntime {
+  return value && SUPPORTED_RUNTIMES.has(value as BuilderRuntime) ? (value as BuilderRuntime) : 'node';
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
@@ -21,9 +26,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | { command?: string; cwd?: string | null; terminalId?: string }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    command?: string;
+    cwd?: string | null;
+    terminalId?: string;
+  } | null;
   const command = body?.command?.trim();
   const terminalId = body?.terminalId?.trim() || 'default';
 
@@ -42,7 +49,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   }
 
   const hasWorkspace = Boolean(project.workspacePath);
-  const requestedCwd = normalizeBuilderTerminalCwd(body?.cwd, hasWorkspace);
+  const remoteWorkspaceRoot = getBuilderProjectRemoteWorkspaceRoot(project);
+  const requestedCwd = normalizeBuilderTerminalCwd(body?.cwd, hasWorkspace, remoteWorkspaceRoot);
   const runtime = resolveRuntime(project.buildRuntime);
 
   try {
@@ -57,7 +65,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         installBunInBuilderBox(box).catch((error) => {
           console.warn('Builder terminal Bun install failed:', error);
         }),
-        seedBuilderWorkspace(box, project.workspacePath ?? null).catch((error) => {
+        seedBuilderWorkspace(box, project.workspacePath ?? null, {
+          remoteRoot: remoteWorkspaceRoot,
+        }).catch((error) => {
           console.warn('Builder terminal workspace seed failed:', error);
           return false;
         }),
@@ -79,6 +89,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       sessionFile,
     });
     const streamRun = await box.exec.stream(shellCommand);
+    const previewPort = inferBuilderPreviewPort(command);
+    const previewUrl = previewPort ? box.getPreviewUrl(previewPort) : null;
 
     request.signal.addEventListener('abort', () => {
       streamRun.cancel().catch(() => undefined);
@@ -110,6 +122,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           command,
           isNewBox: isNew,
         });
+        if (previewPort && previewUrl) {
+          write({
+            type: 'preview',
+            port: previewPort,
+            url: previewUrl,
+          });
+        }
 
         try {
           for await (const chunk of streamRun) {
@@ -124,6 +143,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           const nextCwd = normalizeBuilderTerminalCwd(
             await box.files.read(cwdFile).catch(() => requestedCwd),
             hasWorkspace,
+            remoteWorkspaceRoot,
           );
 
           write({

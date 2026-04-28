@@ -3,12 +3,16 @@ import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { z } from 'zod';
 import { auth } from '@/lib/auth';
+import { bootstrapBuilderAppProjectSession } from '@/lib/builder/app-session';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 const execFileAsync = promisify(execFile);
 
 export const runtime = 'nodejs';
+
+const modeSchema = z.enum(['local', 'web', 'apps', 'ssh']);
 
 type TreeNode = {
   name: string;
@@ -59,6 +63,8 @@ export async function POST(request: Request) {
 
   const formData = await request.formData();
   const file = formData.get('file');
+  const parsedMode = modeSchema.safeParse(formData.get('mode'));
+  const mode = parsedMode.success ? parsedMode.data : 'web';
 
   if (!(file instanceof File)) {
     return Response.json({ error: 'ZIP file is required.' }, { status: 400 });
@@ -99,9 +105,35 @@ export async function POST(request: Request) {
         sourceLabel: 'ZIP Import',
         importMeta: {
           archiveName: file.name,
+          builderMode: mode,
+          platform: mode === 'apps' ? 'mobile' : 'web',
         },
       },
     });
+
+    let previewUrl: string | null = null;
+    if (mode === 'apps') {
+      try {
+        const boot = await bootstrapBuilderAppProjectSession({
+          project: {
+            id: project.id,
+            userId: session.user.id,
+            chatId: project.chatId,
+            name: project.name,
+            sourceType: project.sourceType,
+            workspacePath: project.workspacePath,
+            theme: project.theme,
+            metadata: project.metadata,
+            buildRuntime: null,
+            boxId: null,
+          },
+          reseedWorkspace: true,
+        });
+        previewUrl = boot.liveSession.previewUrl;
+      } catch (error) {
+        console.warn('Failed to bootstrap mobile ZIP project session:', error);
+      }
+    }
 
     return Response.json({
       extractedPath: extractedDir,
@@ -109,6 +141,7 @@ export async function POST(request: Request) {
       tree,
       projectId: project.id,
       redirectTo,
+      previewUrl,
     });
   } catch (error) {
     return Response.json(

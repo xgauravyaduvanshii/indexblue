@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
+import { ensureProjectBuilderBox, getProjectRemoteRoot, writeRemoteProjectTextFile } from '@/lib/builder/app-runtime';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 import {
   createWorkspaceEntry,
@@ -10,6 +11,37 @@ import {
 } from '@/lib/builder/workspace';
 
 export const runtime = 'nodejs';
+
+type BuilderFileRouteProject = NonNullable<Awaited<ReturnType<typeof getBuilderProjectByIdForUser>>>;
+
+function toRemoteWorkspacePath(project: BuilderFileRouteProject, relativePath: string) {
+  return `${getProjectRemoteRoot(project)}/${relativePath}`.replace(/\/{2,}/g, '/');
+}
+
+async function maybeSyncRemoteWorkspace(
+  project: BuilderFileRouteProject,
+  userId: string,
+  callback: (box: Awaited<ReturnType<typeof ensureProjectBuilderBox>>) => Promise<void>,
+) {
+  const existingBoxId = project.boxId ?? project.metadata?.liveSession?.sandboxId ?? null;
+  if (!existingBoxId) return;
+
+  const box = await ensureProjectBuilderBox({
+    project: {
+      id: project.id,
+      chatId: project.chatId,
+      sourceType: project.sourceType,
+      workspacePath: project.workspacePath,
+      metadata: project.metadata,
+      buildRuntime: project.buildRuntime,
+      boxId: existingBoxId,
+    },
+    userId,
+  }).catch(() => null);
+
+  if (!box) return;
+  await callback(box).catch(() => undefined);
+}
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
   const session = await auth.api.getSession({ headers: request.headers });
@@ -83,6 +115,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   try {
     await writeWorkspaceTextFile(project.workspacePath, relativePath, content);
+    await maybeSyncRemoteWorkspace(project, session.user.id, async (box) => {
+      await writeRemoteProjectTextFile(box, toRemoteWorkspacePath(project, relativePath), content);
+    });
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to write workspace file.';
@@ -97,9 +132,13 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
     return Response.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
-  const body = (await request.json().catch(() => null)) as
-    | { action?: 'create' | 'rename'; path?: string; nextPath?: string; type?: 'file' | 'folder'; content?: string }
-    | null;
+  const body = (await request.json().catch(() => null)) as {
+    action?: 'create' | 'rename';
+    path?: string;
+    nextPath?: string;
+    type?: 'file' | 'folder';
+    content?: string;
+  } | null;
 
   const { projectId } = await params;
   const project = await getBuilderProjectByIdForUser({
@@ -122,6 +161,17 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       }
 
       await createWorkspaceEntry(project.workspacePath, body.path, body.type, body.content ?? '');
+      await maybeSyncRemoteWorkspace(project, session.user.id, async (box) => {
+        const remotePath = toRemoteWorkspacePath(project, body.path!);
+        if (body.type === 'folder') {
+          await box.exec.command(`mkdir -p "${remotePath}"`);
+          return;
+        }
+
+        const parentPath = remotePath.split('/').slice(0, -1).join('/') || '/';
+        await box.exec.command(`mkdir -p "${parentPath}"`);
+        await writeRemoteProjectTextFile(box, remotePath, body.content ?? '');
+      });
       return Response.json({ ok: true });
     }
 
@@ -131,6 +181,12 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       }
 
       await renameWorkspaceEntry(project.workspacePath, body.path, body.nextPath);
+      await maybeSyncRemoteWorkspace(project, session.user.id, async (box) => {
+        const fromRemotePath = toRemoteWorkspacePath(project, body.path!);
+        const toRemotePath = toRemoteWorkspacePath(project, body.nextPath!);
+        const parentPath = toRemotePath.split('/').slice(0, -1).join('/') || '/';
+        await box.exec.command(`mkdir -p "${parentPath}" && mv "${fromRemotePath}" "${toRemotePath}"`);
+      });
       return Response.json({ ok: true });
     }
 
@@ -171,6 +227,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
 
   try {
     await deleteWorkspaceEntry(project.workspacePath, relativePath);
+    await maybeSyncRemoteWorkspace(project, session.user.id, async (box) => {
+      await box.exec.command(`rm -rf "${toRemoteWorkspacePath(project, relativePath)}"`);
+    });
     return Response.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to delete workspace entry.';

@@ -2,7 +2,6 @@
 import { createEnv } from '@t3-oss/env-nextjs';
 import { z } from 'zod';
 
-
 export const serverEnv = createEnv({
   server: {
     XAI_API_KEY: z.string().min(1),
@@ -62,6 +61,11 @@ export const serverEnv = createEnv({
     HUBSPOT_MCP_CLIENT_ID: z.string().optional(),
     HUBSPOT_MCP_CLIENT_SECRET: z.string().optional(),
     UPSTASH_BOX_API_KEY: z.string().optional(),
+    E2B_API_KEY: z.string().optional(),
+    E2B_TEMPLATE_ID: z.string().optional(),
+    UNSPLASH_ACCESS_KEY: z.string().optional(),
+    UNSPLASH_SECRET_KEY: z.string().optional(),
+    UNSPLASH_APPLICATION_ID: z.string().optional(),
   },
   experimental__runtimeEnv: process.env,
 });

@@ -5,12 +5,13 @@ import path from 'node:path';
 import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
+import { bootstrapBuilderAppProjectSession } from '@/lib/builder/app-session';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
 
 export const runtime = 'nodejs';
 
 const cloneSchema = z.object({
-  mode: z.enum(['local', 'web']).optional(),
+  mode: z.enum(['local', 'web', 'apps']).optional(),
   repoUrl: z.string().min(1),
   authMode: z.enum(['public', 'token', 'ssh']),
   token: z.string().optional(),
@@ -144,16 +145,53 @@ export async function POST(request: NextRequest) {
                 sourceUrl: repoUrl,
                 importMeta: {
                   mode: parsed.data.mode ?? 'web',
+                  builderMode: parsed.data.mode ?? 'web',
+                  platform: parsed.data.mode === 'apps' ? 'mobile' : 'web',
                   authMode,
                 },
               },
             });
+
+            let previewUrl: string | null = null;
+            if ((parsed.data.mode ?? 'web') === 'apps') {
+              emit(controller, { type: 'log', message: 'Booting mobile app session...' });
+              try {
+                const boot = await bootstrapBuilderAppProjectSession({
+                  project: {
+                    id: project.id,
+                    userId: session.user.id,
+                    chatId: project.chatId,
+                    name: project.name,
+                    sourceType: project.sourceType,
+                    workspacePath: project.workspacePath,
+                    theme: project.theme,
+                    metadata: project.metadata,
+                    buildRuntime: null,
+                    boxId: null,
+                  },
+                  reseedWorkspace: true,
+                });
+                previewUrl = boot.liveSession.previewUrl;
+                emit(controller, {
+                  type: 'log',
+                  message: previewUrl
+                    ? `Mobile preview ready at ${previewUrl}`
+                    : 'Mobile app session booted. Preview is still warming up.',
+                });
+              } catch (error) {
+                emit(controller, {
+                  type: 'log',
+                  message: `Mobile app session bootstrap failed: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                });
+              }
+            }
             emit(controller, {
               type: 'done',
               message: 'Repository cloned successfully.',
               targetDir,
               projectId: project.id,
               redirectTo,
+              previewUrl,
             });
           } else {
             emit(controller, {

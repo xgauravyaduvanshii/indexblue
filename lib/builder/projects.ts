@@ -1,6 +1,7 @@
 import 'server-only';
 
 import path from 'node:path';
+import type { BuilderProjectMetadata } from '@/lib/builder/project-metadata';
 import { createBuilderProjectWorkspace, type BuilderProjectSourceType } from '@/lib/db/builder-project-queries';
 
 export function deriveBuilderProjectName({
@@ -28,12 +29,7 @@ export async function createBuilderProjectFromWorkspace({
   sourceType: BuilderProjectSourceType;
   workspacePath?: string | null;
   fallbackName?: string | null;
-  metadata?: {
-    sourceLabel?: string;
-    sourceUrl?: string;
-    sourceBranch?: string | null;
-    importMeta?: Record<string, unknown>;
-  };
+  metadata?: BuilderProjectMetadata;
 }) {
   const name = deriveBuilderProjectName({
     sourceType,

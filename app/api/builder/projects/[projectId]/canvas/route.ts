@@ -3,6 +3,7 @@ import { generateText } from 'ai';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { scira } from '@/ai/providers';
+import { serverEnv } from '@/env/server';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,45 @@ function stripCodeFence(text: string) {
     .replace(/^```(?:html)?\s*/i, '')
     .replace(/\s*```$/i, '')
     .trim();
+}
+
+async function fetchUnsplashImage(query: string) {
+  if (!serverEnv.UNSPLASH_ACCESS_KEY) return null;
+
+  const url = new URL('https://api.unsplash.com/search/photos');
+  url.searchParams.set('query', query);
+  url.searchParams.set('orientation', 'portrait');
+  url.searchParams.set('per_page', '1');
+  url.searchParams.set('client_id', serverEnv.UNSPLASH_ACCESS_KEY);
+
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+      'Accept-Version': 'v1',
+    },
+  });
+
+  if (!response.ok) {
+    return null;
+  }
+
+  const payload = (await response.json().catch(() => null)) as {
+    results?: Array<{
+      urls?: { regular?: string };
+      alt_description?: string | null;
+      user?: { name?: string | null };
+    }>;
+  } | null;
+  const result = payload?.results?.[0];
+  const imageUrl = result?.urls?.regular;
+
+  if (!imageUrl) return null;
+
+  return {
+    url: imageUrl,
+    alt: result?.alt_description || query,
+    credit: result?.user?.name || null,
+  };
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
@@ -92,9 +132,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
   const system = `You create polished visual app screens for a builder canvas.
 
-Return exactly two XML-like blocks and nothing else:
+Return XML-like blocks and nothing else:
 <title>Short frame title</title>
 <canvas_html>HTML fragment only</canvas_html>
+Optionally, when a real photographic image would improve the frame, also return:
+<unsplash_query>short photo search query</unsplash_query>
 
 Rules:
 - Return a single self-contained HTML fragment for the inside of the page body.
@@ -105,6 +147,8 @@ Rules:
 - Make the result visually rich and production-grade.
 - Prefer desktop app / dashboard / landing-section style layouts that look great inside a 420px wide device frame.
 - Keep spacing intentional and avoid generic boilerplate.
+- Only request Unsplash if a real photo materially improves the design.
+- If you return <unsplash_query>, use {{UNSPLASH_IMAGE}} as the image src inside the HTML.
 - If selected canvas items are provided, use them as concrete visual context for the new result.
 - If mode is regenerate, preserve the original screen's intent while applying the user's requested changes.`;
 
@@ -132,7 +176,15 @@ ${prompt}
 
     const title =
       extractTaggedBlock(text, 'title') || (mode === 'regenerate' ? selectedFrame?.title : null) || 'Canvas Frame';
-    const htmlBlock = extractTaggedBlock(text, 'canvas_html') || stripCodeFence(text);
+    const unsplashQuery = extractTaggedBlock(text, 'unsplash_query');
+    let htmlBlock = extractTaggedBlock(text, 'canvas_html') || stripCodeFence(text);
+
+    if (unsplashQuery && htmlBlock.includes('{{UNSPLASH_IMAGE}}')) {
+      const image = await fetchUnsplashImage(unsplashQuery);
+      if (image?.url) {
+        htmlBlock = htmlBlock.replaceAll('{{UNSPLASH_IMAGE}}', image.url);
+      }
+    }
 
     if (!htmlBlock) {
       return Response.json({ error: 'The AI did not return canvas HTML.' }, { status: 500 });

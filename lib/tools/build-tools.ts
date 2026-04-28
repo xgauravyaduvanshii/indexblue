@@ -1,6 +1,5 @@
 import 'server-only';
 
-import { Box, type Runtime } from '@upstash/box';
 import { tool } from 'ai';
 import type { UIMessageStreamWriter } from 'ai';
 import { z } from 'zod';
@@ -9,12 +8,15 @@ import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { r2Client, R2_BUCKET_NAME, R2_PUBLIC_URL } from '@/lib/r2';
 import { serverEnv } from '@/env/server';
 import {
-  BUILDER_REMOTE_PROJECT_PATH,
+  type BuilderRuntime,
+  type BuilderSandbox,
   createBuilderBox,
   installBunInBuilderBox,
   reconnectBuilderBox,
   seedBuilderWorkspace,
 } from '@/lib/builder/box';
+import { BUILDER_BOX_ROOT, BUILDER_REMOTE_PROJECT_PATH } from '@/lib/builder/paths';
+import { inferBuilderPreviewPort } from '@/lib/builder/preview';
 
 import { scrapeWebpageWithNotte } from '@/lib/notte';
 import type { ChatMessage } from '@/lib/types';
@@ -25,13 +27,13 @@ import { getBetterAllOptions } from '@/lib/better-all';
 
 const LOG_PREFIX = '🔨 [Build]';
 
-export const SUPPORTED_RUNTIMES: Runtime[] = ['node', 'python', 'golang', 'ruby', 'rust'];
+export const SUPPORTED_RUNTIMES: BuilderRuntime[] = ['node', 'python', 'golang', 'ruby', 'rust'];
 
 class BoxManager {
-  private box: Box | null = null;
-  private creating: Promise<Box> | null = null;
+  private box: BuilderSandbox | null = null;
+  private creating: Promise<BuilderSandbox> | null = null;
   private userId: string;
-  private runtime: Runtime;
+  private runtime: BuilderRuntime;
   private existingBoxId: string | null;
   private mcpServerNames: string[] = [];
   private _hasVercelMcp: boolean = false;
@@ -43,7 +45,7 @@ class BoxManager {
   }
 
   /** May only be called before the first getBox() call. */
-  setRuntime(runtime: Runtime) {
+  setRuntime(runtime: BuilderRuntime) {
     if (this.box || this.creating) {
       console.warn(`${LOG_PREFIX} setRuntime() called after Box was already created — ignored`);
       return;
@@ -51,11 +53,11 @@ class BoxManager {
     this.runtime = runtime;
   }
 
-  getRuntime(): Runtime {
+  getRuntime(): BuilderRuntime {
     return this.runtime;
   }
 
-  async getBox(): Promise<Box> {
+  async getBox(): Promise<BuilderSandbox> {
     if (this.box) return this.box;
     if (this.creating) {
       this.box = await this.creating;
@@ -75,7 +77,7 @@ class BoxManager {
     return this.box;
   }
 
-  private async reconnectBox(boxId: string): Promise<Box> {
+  private async reconnectBox(boxId: string): Promise<BuilderSandbox> {
     try {
       const box = await reconnectBuilderBox(boxId);
       return box;
@@ -86,7 +88,7 @@ class BoxManager {
     }
   }
 
-  private async initBox(): Promise<Box> {
+  private async initBox(): Promise<BuilderSandbox> {
     const created = await createBuilderBox({
       userId: this.userId,
       runtime: this.runtime,
@@ -143,6 +145,20 @@ function createBoxExecTool(dataStream: UIMessageStreamWriter<ChatMessage> | unde
       }
 
       try {
+        const previewPort = inferBuilderPreviewPort(command);
+        if (previewPort && dataStream) {
+          dataStream.write({
+            type: 'data-build_search',
+            data: {
+              kind: 'preview',
+              previewId: execId,
+              port: previewPort,
+              url: box.getPreviewUrl(previewPort),
+              status: 'completed',
+            },
+          });
+        }
+
         const stream = await box.exec.stream(command);
         let stdout = '';
 
@@ -193,7 +209,7 @@ function createBoxWriteFileTool(dataStream: UIMessageStreamWriter<ChatMessage> |
       path: z
         .string()
         .describe(
-          'Absolute path inside the sandbox to write to, e.g. /workspace/home/.task.md or /workspace/home/config.json',
+          `Absolute path inside the sandbox to write to, e.g. ${BUILDER_BOX_ROOT}/.task.md or ${BUILDER_BOX_ROOT}/config.json`,
         ),
       content: z.string().describe('Full text content to write into the file'),
     }),
@@ -363,11 +379,11 @@ function createBoxAgentTool(
 
       const filesLine =
         uploadedFiles.length > 0
-          ? `The user has uploaded the following files which are already available in the sandbox:\n${uploadedFiles.map((f) => `  /workspace/home/${f.name} (${f.mediaType})`).join('\n')}\n\n`
+          ? `The user has uploaded the following files which are already available in the sandbox:\n${uploadedFiles.map((f) => `  ${BUILDER_BOX_ROOT}/${f.name} (${f.mediaType})`).join('\n')}\n\n`
           : '';
 
       const vercelLine = boxManager.hasVercelMcp()
-        ? 'The user has connected their Vercel account. Their Vercel OAuth token is stored in the sandbox at /workspace/home/.box-internal/mcp-config.json under the Authorization header for the Vercel MCP server. To deploy: read that file, extract the Bearer token, then run "export VERCEL_TOKEN=<token>" before using the Vercel CLI (e.g. "vercel --token $VERCEL_TOKEN --yes" or "vercel --token $VERCEL_TOKEN --prod").\n\n'
+        ? `The user has connected their Vercel account. Their Vercel OAuth token is stored in the sandbox at ${BUILDER_BOX_ROOT}/.box-internal/mcp-config.json under the Authorization header for the Vercel MCP server. To deploy: read that file, extract the Bearer token, then run "export VERCEL_TOKEN=<token>" before using the Vercel CLI (e.g. "vercel --token $VERCEL_TOKEN --yes" or "vercel --token $VERCEL_TOKEN --prod").\n\n`
         : '';
 
       const skillPreamble = `${mcpLine}${filesLine}${vercelLine}Complete the following task:\n\n`;
@@ -649,7 +665,14 @@ function createBrowsePageTool(dataStream: UIMessageStreamWriter<ChatMessage> | u
 function createBuildWebSearchTool(dataStream: UIMessageStreamWriter<ChatMessage> | undefined) {
   const exa = new Exa(serverEnv.EXA_API_KEY);
   const firecrawl = new FirecrawlApp({ apiKey: serverEnv.FIRECRAWL_API_KEY });
-  type ExaSearchCategory = 'news' | 'company' | 'research paper' | 'financial report' | 'pdf' | 'personal site' | 'people';
+  type ExaSearchCategory =
+    | 'news'
+    | 'company'
+    | 'research paper'
+    | 'financial report'
+    | 'pdf'
+    | 'personal site'
+    | 'people';
 
   return tool({
     description:
@@ -853,6 +876,7 @@ function createBoxInitTool(
   boxManager: BoxManager,
   uploadedFiles: UploadedFileContext[] = [],
   seedWorkspacePath?: string | null,
+  seedRemoteRoot = BUILDER_REMOTE_PROJECT_PATH,
 ) {
   return tool({
     description:
@@ -906,7 +930,7 @@ function createBoxInitTool(
         ]);
         await Promise.all(
           uploadedFiles.map(async (file) => {
-            const dest = `/workspace/home/${file.name}`;
+            const dest = `${BUILDER_BOX_ROOT}/${file.name}`;
             try {
               const response = await fetch(file.url);
               if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -920,7 +944,7 @@ function createBoxInitTool(
                 // Binary file — write base64 content to a temp file, decode it, then clean up
                 const buffer = await response.arrayBuffer();
                 const b64 = Buffer.from(buffer).toString('base64');
-                const b64Path = `/workspace/home/_b64_${file.name}`;
+                const b64Path = `${BUILDER_BOX_ROOT}/_b64_${file.name}`;
                 await box.files.write({ path: b64Path, content: b64 });
                 await box.exec.command(`base64 -d "${b64Path}" > "${dest}" && rm -f "${b64Path}"`);
               }
@@ -938,7 +962,9 @@ function createBoxInitTool(
         if (!seedWorkspacePath) return;
 
         try {
-          seededWorkspace = await seedBuilderWorkspace(box, seedWorkspacePath);
+          seededWorkspace = await seedBuilderWorkspace(box, seedWorkspacePath, {
+            remoteRoot: seedRemoteRoot,
+          });
           console.log(`${LOG_PREFIX} [init:${toolCallId}] Seeded workspace from ${seedWorkspacePath}`);
         } catch (error) {
           console.error(`${LOG_PREFIX} [init:${toolCallId}] Failed to seed workspace:`, error);
@@ -953,7 +979,7 @@ function createBoxInitTool(
           ? `\nUploaded files are available in the sandbox:\n${downloadedPaths.map((f) => `  ${f.path} (${f.mediaType})`).join('\n')}`
           : '';
       const workspaceNote = seededWorkspace
-        ? '\nThe imported project workspace is available at /workspace/home/project.'
+        ? `\nThe imported project workspace is available at ${seedRemoteRoot}.`
         : '';
 
       if (dataStream) {
@@ -974,7 +1000,7 @@ function createBoxInitTool(
         runtime,
         message: `Sandbox ready (${runtime}). Bun installed. ${reason}${workspaceNote}${filesNote}`,
         ...(downloadedPaths.length > 0 ? { uploadedFiles: downloadedPaths } : {}),
-        ...(seededWorkspace ? { workspacePath: BUILDER_REMOTE_PROJECT_PATH } : {}),
+        ...(seededWorkspace ? { workspacePath: seedRemoteRoot } : {}),
       };
     },
   });
@@ -986,11 +1012,12 @@ export function createBuildTools(
   existingBoxId?: string | null,
   uploadedFiles: UploadedFileContext[] = [],
   seedWorkspacePath?: string | null,
+  seedRemoteRoot = BUILDER_REMOTE_PROJECT_PATH,
 ) {
   const boxManager = new BoxManager(userId, existingBoxId);
 
   const tools = {
-    box_init: createBoxInitTool(dataStream, boxManager, uploadedFiles, seedWorkspacePath),
+    box_init: createBoxInitTool(dataStream, boxManager, uploadedFiles, seedWorkspacePath, seedRemoteRoot),
     build_web_search: createBuildWebSearchTool(dataStream),
     box_exec: createBoxExecTool(dataStream, boxManager),
     box_write_file: createBoxWriteFileTool(dataStream, boxManager),
