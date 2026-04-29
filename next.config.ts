@@ -7,6 +7,10 @@ const jiti = createJiti(fileURLToPath(import.meta.url));
 jiti.import('./env/server.ts');
 jiti.import('./env/client.ts');
 
+const isWebContainerBuilderEnabled =
+  process.env.NEXT_PUBLIC_BUILDER_WEB_RUNTIME_PROVIDER === 'webcontainers' ||
+  process.env.BUILDER_WEB_RUNTIME_PROVIDER === 'webcontainers';
+
 const nextConfig: NextConfig = {
   compiler: {
     // if NODE_ENV is production, remove console.log
@@ -107,6 +111,27 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      ...(isWebContainerBuilderEnabled
+        ? [
+            {
+              source: '/builder/:path*',
+              headers: [
+                {
+                  key: 'Cross-Origin-Embedder-Policy',
+                  value: 'credentialless',
+                },
+                {
+                  key: 'Cross-Origin-Opener-Policy',
+                  value: 'same-origin',
+                },
+                {
+                  key: 'Cross-Origin-Resource-Policy',
+                  value: 'cross-origin',
+                },
+              ],
+            },
+          ]
+        : []),
       {
         // Apply X-Frame-Options: DENY to all routes except public legal pages
         source: '/((?!privacy-policy|terms|about).*)',

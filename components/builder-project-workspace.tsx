@@ -5,6 +5,7 @@ import { useChat } from '@ai-sdk/react';
 import dynamic from 'next/dynamic';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   Bot,
   Check,
@@ -16,6 +17,9 @@ import {
   FolderPlus,
   ExternalLink,
   File,
+  FileAudio2,
+  FileImage,
+  FileVideo2,
   Folder,
   FolderOpen,
   Loader2,
@@ -48,6 +52,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { BuilderCanvas } from '@/components/builder-canvas';
 import { BuilderMobilePreview } from '@/components/builder-mobile-preview';
+import { BuilderTerminalSurface } from '@/components/builder-terminal-surface';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -62,6 +67,7 @@ import { Textarea } from '@/components/ui/textarea';
 import type { BuilderCanvasState } from '@/lib/builder/canvas';
 import { BUILDER_BOX_ROOT, BUILDER_REMOTE_PROJECT_PATH } from '@/lib/builder/paths';
 import {
+  getBuilderProjectRuntimeProvider,
   getBuilderProjectMode as deriveBuilderProjectMode,
   getBuilderProjectRemoteWorkspaceRoot,
   isAppBuilderProject as isAppBuilderWorkspaceProject,
@@ -70,6 +76,7 @@ import {
 } from '@/lib/builder/project-metadata';
 import type { ChatMessage, DataBuildSearchPart } from '@/lib/types';
 import { cn, normalizeError } from '@/lib/utils';
+import { BuilderWebContainerPreview } from '@/components/builder-webcontainer-preview';
 
 const MonacoEditor = dynamic(() => import('@monaco-editor/react'), { ssr: false });
 
@@ -95,8 +102,11 @@ type BuilderWorkspaceNode = {
 
 type FileRecord = {
   content: string | null;
+  kind: 'text' | 'image' | 'audio' | 'video' | 'pdf' | 'binary';
   isLoading: boolean;
   error: string | null;
+  mimeType: string | null;
+  size: number;
 };
 
 type BuildConsoleEntry = {
@@ -121,6 +131,7 @@ type ManualTerminalStreamEvent =
   | {
       type: 'started';
       boxId: string;
+      providerTerminalId?: string;
       cwd: string;
       command: string;
       isNewBox: boolean;
@@ -155,13 +166,14 @@ type TerminalSession = {
   output: string;
   commandError: string | null;
   boxId: string;
+  providerTerminalId?: string;
   isRunning: boolean;
 };
 
 type ViewTab = 'code' | 'preview' | 'canvas' | BuilderAppToolTabId;
 
 const WEB_WORKSPACE_TOOL_TABS: BuilderAppToolTabId[] = ['push-to-github'];
-type BottomTab = 'terminal' | 'errors';
+type BottomTab = 'logs' | 'terminal' | 'errors';
 type MobileTab = 'chat' | 'workbench';
 
 const QUICK_PROMPTS = [
@@ -181,6 +193,10 @@ const MAX_CHAT_WIDTH = 42;
 const MIN_TERMINAL_HEIGHT = 110;
 const MAX_TERMINAL_HEIGHT = 420;
 const PREVIEWABLE_EXTENSIONS = new Set(['html', 'htm']);
+const IMAGE_FILE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'avif', 'bmp', 'ico', 'svg']);
+const AUDIO_FILE_EXTENSIONS = new Set(['mp3', 'wav', 'ogg', 'oga', 'm4a', 'aac', 'flac', 'weba']);
+const VIDEO_FILE_EXTENSIONS = new Set(['mp4', 'webm', 'mov', 'm4v', 'ogv', 'mpeg', 'mpg']);
+const PDF_FILE_EXTENSIONS = new Set(['pdf']);
 const EDITABLE_FILE_EXTENSIONS = new Set([
   'txt',
   'md',
@@ -210,6 +226,12 @@ const EDITABLE_FILE_EXTENSIONS = new Set([
   'gitignore',
   'mjs',
   'cjs',
+  'svg',
+  'dockerfile',
+  'conf',
+  'config',
+  'log',
+  'csv',
 ]);
 const DEFAULT_REMOTE_TERMINAL_ROOT = BUILDER_BOX_ROOT;
 const DEFAULT_REMOTE_PROJECT_ROOT = BUILDER_REMOTE_PROJECT_PATH;
@@ -236,7 +258,14 @@ function getFileExtension(path: string) {
 
 function isEditableFile(path: string) {
   const extension = getFileExtension(path);
-  return EDITABLE_FILE_EXTENSIONS.has(extension) || path.split('/').pop()?.startsWith('.') === true;
+  const basename = path.split('/').pop() ?? '';
+  return (
+    EDITABLE_FILE_EXTENSIONS.has(extension) ||
+    basename.startsWith('.') ||
+    ['Dockerfile', 'Makefile', 'Procfile', 'Gemfile', 'Podfile', 'Brewfile', 'Rakefile', 'Jenkinsfile'].includes(
+      basename,
+    )
+  );
 }
 
 function getEditorLanguage(path: string | null) {
@@ -298,8 +327,76 @@ function createTerminalSession(index: number, cwd: string, boxId = ''): Terminal
     output: '',
     commandError: null,
     boxId,
+    providerTerminalId: '',
     isRunning: false,
   };
+}
+
+function appendTerminalText(buffer: string, chunk: string, limit = 180_000) {
+  const next = `${buffer}${chunk}`;
+  return next.length > limit ? next.slice(next.length - limit) : next;
+}
+
+function formatRuntimeTimestamp(timestamp: number) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+  });
+}
+
+function formatRuntimeLogBuffer(consoleEntries: BuildConsoleEntry[]) {
+  if (consoleEntries.length === 0) {
+    return 'Runtime logs will appear here as the builder starts previews, runs commands, edits files, and reports errors.\n';
+  }
+
+  return [...consoleEntries]
+    .reverse()
+    .map((entry) => {
+      const status =
+        entry.status === 'running'
+          ? 'RUNNING'
+          : entry.status === 'completed'
+            ? 'DONE'
+            : entry.status === 'error'
+              ? 'ERROR'
+              : 'INFO';
+
+      const lines = [`[${formatRuntimeTimestamp(entry.timestamp)}] ${status} ${entry.title}`];
+      const detail = entry.detail.trim();
+      if (detail) {
+        lines.push(detail);
+      }
+
+      return lines.join('\n');
+    })
+    .join('\n\n');
+}
+
+function formatFileSize(size: number) {
+  if (!Number.isFinite(size) || size <= 0) return '0 B';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  if (size < 1024 * 1024 * 1024) return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(size / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function getWorkspaceRawAssetUrl(projectId: string, relativePath: string) {
+  return `/api/builder/projects/${projectId}/file?path=${encodeURIComponent(relativePath)}&raw=1`;
+}
+
+function getFilePreviewKind(selectedFilePath: string | null, fileRecord: FileRecord | undefined) {
+  if (!selectedFilePath || !fileRecord) return 'empty';
+  if (fileRecord.kind !== 'text') return fileRecord.kind;
+
+  const extension = getFileExtension(selectedFilePath);
+  if (IMAGE_FILE_EXTENSIONS.has(extension)) return 'image';
+  if (AUDIO_FILE_EXTENSIONS.has(extension)) return 'audio';
+  if (VIDEO_FILE_EXTENSIONS.has(extension)) return 'video';
+  if (PDF_FILE_EXTENSIONS.has(extension)) return 'pdf';
+  return fileRecord.kind;
 }
 
 function flattenWorkspaceTree(nodes: BuilderWorkspaceNode[]): BuilderWorkspaceNode[] {
@@ -553,7 +650,7 @@ function replacePathPrefix(value: string, fromPath: string, toPath: string) {
 }
 
 function buildPreviewSource(selectedFilePath: string | null, fileRecord: FileRecord | undefined) {
-  if (!selectedFilePath || !fileRecord?.content) return null;
+  if (!selectedFilePath || fileRecord?.kind !== 'text' || !fileRecord.content) return null;
   return PREVIEWABLE_EXTENSIONS.has(getFileExtension(selectedFilePath)) ? fileRecord.content : null;
 }
 
@@ -590,13 +687,14 @@ export function BuilderProjectWorkspace({
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const isAppWorkspace = isAppBuilderProject(project);
+  const runtimeProvider = useMemo(() => getBuilderProjectRuntimeProvider(project), [project]);
   const availableWorkspaceToolTabs = useMemo<BuilderAppToolTabId[]>(
     () => (isAppWorkspace ? BUILDER_APP_TOOL_TABS.map((tab) => tab.id) : WEB_WORKSPACE_TOOL_TABS),
     [isAppWorkspace],
   );
   const [viewTab, setViewTab] = useState<ViewTab>('canvas');
   const [openAppTabs, setOpenAppTabs] = useState<BuilderAppToolTabId[]>([]);
-  const [bottomTab, setBottomTab] = useState<BottomTab>('terminal');
+  const [bottomTab, setBottomTab] = useState<BottomTab>('logs');
   const [mobileTab, setMobileTab] = useState<MobileTab>('workbench');
   const [chatInput, setChatInput] = useState('');
   const [chatWidth, setChatWidth] = useState(DEFAULT_CHAT_WIDTH);
@@ -606,7 +704,9 @@ export function BuilderProjectWorkspace({
   const [tree, setTree] = useState(initialTree);
   const [treeError, setTreeError] = useState<string | null>(null);
   const [isRefreshingTree, setIsRefreshingTree] = useState(false);
+  const [isRestartingRuntime, setIsRestartingRuntime] = useState(false);
   const [consoleEntries, setConsoleEntries] = useState<BuildConsoleEntry[]>([]);
+  const [runtimeLogOutput, setRuntimeLogOutput] = useState('');
   const [appLiveSession, setAppLiveSession] = useState<BuilderProjectLiveSession | null>(
     project.metadata?.liveSession ?? null,
   );
@@ -835,6 +935,7 @@ export function BuilderProjectWorkspace({
             output: '',
             commandError: null,
             boxId: typeof terminal.boxId === 'string' ? terminal.boxId : (project.boxId ?? ''),
+            providerTerminalId: typeof terminal.providerTerminalId === 'string' ? terminal.providerTerminalId : '',
             isRunning: false,
           }))
         : [];
@@ -895,6 +996,7 @@ export function BuilderProjectWorkspace({
           cwd: terminal.cwd,
           history: terminal.history.slice(-MAX_TERMINAL_HISTORY),
           boxId: terminal.boxId,
+          providerTerminalId: terminal.providerTerminalId,
         })),
       }),
     );
@@ -934,6 +1036,103 @@ export function BuilderProjectWorkspace({
     }
   }, [project.id, selectedFilePath]);
 
+  const restartRuntime = useCallback(async () => {
+    if (isRestartingRuntime) return;
+
+    setIsRestartingRuntime(true);
+    setConsoleEntries((current) => {
+      const nextEntry: BuildConsoleEntry = {
+        id: `runtime-rerun:${Date.now()}`,
+        source: 'preview',
+        title: runtimeProvider === 'codesandbox' ? 'Restarting CodeSandbox runtime' : 'Restarting runtime',
+        detail: project.name,
+        status: 'running',
+        level: 'default',
+        timestamp: Date.now(),
+      };
+      return [nextEntry, ...current].slice(0, 250);
+    });
+
+    try {
+      const response = await fetch(`/api/builder/projects/${project.id}/runtime`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ action: 'rerun' }),
+      });
+      const payload = (await response.json().catch(() => null)) as {
+        error?: string;
+        boxId?: string | null;
+        previewUrl?: string | null;
+      } | null;
+
+      if (!response.ok) {
+        throw new Error(payload?.error || 'Failed to restart the runtime.');
+      }
+
+      if (payload?.previewUrl) {
+        setPreviewUrl(payload.previewUrl);
+        setViewTab('preview');
+      }
+
+      setTerminals((current) =>
+        current.map((terminal) => ({
+          ...terminal,
+          boxId: payload?.boxId ?? terminal.boxId,
+          providerTerminalId: runtimeProvider === 'codesandbox' ? '' : terminal.providerTerminalId,
+          isRunning: false,
+          commandError: null,
+          output: appendTerminalText(
+            terminal.output,
+            `${
+              terminal.output.length === 0 || terminal.output.endsWith('\n') ? '' : '\n'
+            }[runtime restarted${payload?.previewUrl ? ` • preview ready ${payload.previewUrl}` : ''}]\n`,
+          ),
+        })),
+      );
+
+      setConsoleEntries((current) => {
+        const nextEntry: BuildConsoleEntry = {
+          id: `runtime-rerun:done:${Date.now()}`,
+          source: 'preview',
+          title: runtimeProvider === 'codesandbox' ? 'CodeSandbox restarted' : 'Runtime restarted',
+          detail: payload?.previewUrl ?? project.name,
+          status: 'completed',
+          level: 'success',
+          timestamp: Date.now(),
+        };
+        return [nextEntry, ...current].slice(0, 250);
+      });
+
+      await refreshTree();
+    } catch (error) {
+      const message = normalizeError(error);
+      setConsoleEntries((current) => {
+        const nextEntry: BuildConsoleEntry = {
+          id: `runtime-rerun:error:${Date.now()}`,
+          source: 'preview',
+          title: runtimeProvider === 'codesandbox' ? 'CodeSandbox restart failed' : 'Runtime restart failed',
+          detail: message,
+          status: 'error',
+          level: 'error',
+          timestamp: Date.now(),
+        };
+        return [nextEntry, ...current].slice(0, 250);
+      });
+      setTerminals((current) =>
+        current.map((terminal) => ({
+          ...terminal,
+          isRunning: false,
+          commandError: message,
+          output: appendTerminalText(terminal.output, `[runtime restart failed] ${message}\n`),
+        })),
+      );
+    } finally {
+      setIsRestartingRuntime(false);
+    }
+  }, [isRestartingRuntime, project.id, project.name, refreshTree, runtimeProvider]);
+
   const loadFile = useCallback(
     async (path: string, force = false) => {
       setFileRecords((current) => {
@@ -944,6 +1143,9 @@ export function BuilderProjectWorkspace({
             content: null,
             error: null,
             isLoading: true,
+            kind: 'text',
+            mimeType: null,
+            size: 0,
           },
         };
       });
@@ -952,7 +1154,13 @@ export function BuilderProjectWorkspace({
         const response = await fetch(`/api/builder/projects/${project.id}/file?path=${encodeURIComponent(path)}`, {
           cache: 'no-store',
         });
-        const payload = (await response.json()) as { error?: string; content?: string };
+        const payload = (await response.json()) as {
+          error?: string;
+          content?: string | null;
+          kind?: FileRecord['kind'];
+          mimeType?: string;
+          size?: number;
+        };
 
         if (!response.ok) {
           throw new Error(payload.error || 'Failed to load file.');
@@ -961,13 +1169,18 @@ export function BuilderProjectWorkspace({
         setFileRecords((current) => ({
           ...current,
           [path]: {
-            content: payload.content ?? '',
+            content: payload.content ?? null,
             error: null,
             isLoading: false,
+            kind: payload.kind ?? 'text',
+            mimeType: payload.mimeType ?? null,
+            size: typeof payload.size === 'number' ? payload.size : 0,
           },
         }));
         setDraftContents((current) =>
-          dirtyFilesRef.current[path] ? current : { ...current, [path]: payload.content ?? '' },
+          dirtyFilesRef.current[path] || payload.kind !== 'text'
+            ? current
+            : { ...current, [path]: payload.content ?? '' },
         );
         setSaveErrors((current) => ({ ...current, [path]: null }));
       } catch (error) {
@@ -977,6 +1190,9 @@ export function BuilderProjectWorkspace({
             content: null,
             error: normalizeError(error),
             isLoading: false,
+            kind: 'binary',
+            mimeType: null,
+            size: 0,
           },
         }));
       }
@@ -1054,6 +1270,9 @@ export function BuilderProjectWorkspace({
             content,
             error: null,
             isLoading: false,
+            kind: current[path]?.kind ?? 'text',
+            mimeType: current[path]?.mimeType ?? 'text/plain; charset=utf-8',
+            size: content.length,
           },
         }));
         setDirtyFiles((current) => ({ ...current, [path]: false }));
@@ -1319,10 +1538,11 @@ export function BuilderProjectWorkspace({
       const terminal = terminals.find((entry) => entry.id === (terminalId ?? activeTerminal?.id));
       if (!terminal) return;
 
-      const command = (input ?? terminal.input).trim();
-      if (!command || terminal.isRunning) return;
+      const rawCommand = (input ?? terminal.input).replace(/\r\n?/g, '\n');
+      const trimmedCommand = rawCommand.trim();
+      if (!trimmedCommand || terminal.isRunning) return;
 
-      if (command === 'clear' || command === 'reset') {
+      if (trimmedCommand === 'clear' || trimmedCommand === 'reset') {
         updateTerminal(terminal.id, (current) => ({
           ...current,
           output: '',
@@ -1336,6 +1556,8 @@ export function BuilderProjectWorkspace({
         return;
       }
 
+      const command = rawCommand;
+
       setBottomTab('terminal');
       setShowTerminal(true);
       updateTerminal(terminal.id, (current) => ({
@@ -1346,7 +1568,10 @@ export function BuilderProjectWorkspace({
         history: [...current.history, command].slice(-MAX_TERMINAL_HISTORY),
         historyIndex: null,
         isRunning: true,
-        output: `${current.output}${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}${formatTerminalPrompt(current.cwd)} ${command}\n`,
+        output: appendTerminalText(
+          current.output,
+          `${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}${formatTerminalPrompt(current.cwd)} ${command}\n`,
+        ),
       }));
 
       setConsoleEntries((current) => {
@@ -1375,6 +1600,7 @@ export function BuilderProjectWorkspace({
             command,
             cwd: terminal.cwd,
             terminalId: terminal.id,
+            providerTerminalId: terminal.providerTerminalId ?? null,
           }),
           signal: abortController.signal,
         });
@@ -1398,20 +1624,26 @@ export function BuilderProjectWorkspace({
               updateTerminal(terminal.id, (current) => ({
                 ...current,
                 boxId: event.boxId,
-                output: event.isNewBox ? `${current.output}[connected to sandbox ${event.boxId}]\n` : current.output,
+                providerTerminalId: event.providerTerminalId || current.providerTerminalId,
+                output: event.isNewBox
+                  ? appendTerminalText(current.output, `[connected to sandbox ${event.boxId}]\n`)
+                  : current.output,
               }));
               break;
             case 'output':
               updateTerminal(terminal.id, (current) => ({
                 ...current,
-                output: `${current.output}${event.chunk}`,
+                output: appendTerminalText(current.output, event.chunk),
               }));
               break;
             case 'preview':
               setPreviewUrl(event.url);
               updateTerminal(terminal.id, (current) => ({
                 ...current,
-                output: `${current.output}${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}[preview ready] ${event.url}\n`,
+                output: appendTerminalText(
+                  current.output,
+                  `${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}[preview ready] ${event.url}\n`,
+                ),
               }));
               break;
             case 'exit':
@@ -1419,7 +1651,10 @@ export function BuilderProjectWorkspace({
                 ...current,
                 cwd: event.cwd,
                 isRunning: false,
-                output: `${current.output}${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}[process exited ${event.exitCode}]\n`,
+                output: appendTerminalText(
+                  current.output,
+                  `${current.output.length === 0 || current.output.endsWith('\n') ? '' : '\n'}[process exited ${event.exitCode}]\n`,
+                ),
               }));
               setConsoleEntries((current) => {
                 const nextEntry: BuildConsoleEntry = {
@@ -1439,7 +1674,7 @@ export function BuilderProjectWorkspace({
                 ...current,
                 isRunning: false,
                 commandError: event.message,
-                output: `${current.output}[terminal error] ${event.message}\n`,
+                output: appendTerminalText(current.output, `[terminal error] ${event.message}\n`),
               }));
               setConsoleEntries((current) => {
                 const nextEntry: BuildConsoleEntry = {
@@ -1458,7 +1693,7 @@ export function BuilderProjectWorkspace({
               updateTerminal(terminal.id, (current) => ({
                 ...current,
                 isRunning: false,
-                output: `${current.output}[command cancelled]\n`,
+                output: appendTerminalText(current.output, '[command cancelled]\n'),
               }));
               break;
           }
@@ -1486,12 +1721,16 @@ export function BuilderProjectWorkspace({
         if (finalLine) {
           handleStreamEvent(JSON.parse(finalLine) as ManualTerminalStreamEvent);
         }
+
+        if (runtimeProvider === 'codesandbox') {
+          void refreshTree();
+        }
       } catch (error) {
         if (abortController.signal.aborted) {
           updateTerminal(terminal.id, (current) => ({
             ...current,
             isRunning: false,
-            output: `${current.output}[command cancelled]\n`,
+            output: appendTerminalText(current.output, '[command cancelled]\n'),
           }));
         } else {
           const message = normalizeError(error);
@@ -1499,7 +1738,7 @@ export function BuilderProjectWorkspace({
             ...current,
             isRunning: false,
             commandError: message,
-            output: `${current.output}[terminal error] ${message}\n`,
+            output: appendTerminalText(current.output, `[terminal error] ${message}\n`),
           }));
           setConsoleEntries((current) => {
             const nextEntry: BuildConsoleEntry = {
@@ -1522,7 +1761,7 @@ export function BuilderProjectWorkspace({
         }));
       }
     },
-    [activeTerminal, project.id, terminals, updateTerminal],
+    [activeTerminal, project.id, refreshTree, runtimeProvider, terminals, updateTerminal],
   );
 
   const stopTerminalCommand = useCallback(
@@ -1624,21 +1863,20 @@ export function BuilderProjectWorkspace({
     onData: (dataPart) => {
       if (dataPart.type !== 'data-build_search') return;
       const activity = dataPart.data as DataBuildSearchPart['data'];
-      const targetTerminalId = activeTerminal?.id ?? terminals[0]?.id ?? null;
 
-      if (activity.kind === 'exec_output' && targetTerminalId) {
-        updateTerminal(targetTerminalId, (current) => ({
-          ...current,
-          output: `${current.output}${activity.chunk}`,
-        }));
+      if (activity.kind === 'exec_output') {
+        setRuntimeLogOutput((current) => appendTerminalText(current, activity.chunk, 240_000));
         return;
       }
 
-      if (activity.kind === 'exec' && activity.status === 'running' && targetTerminalId) {
-        updateTerminal(targetTerminalId, (current) => ({
-          ...current,
-          output: `${current.output}${current.output.endsWith('\n') || current.output.length === 0 ? '' : '\n'}$ ${activity.command}\n`,
-        }));
+      if (activity.kind === 'exec' && activity.status === 'running') {
+        setRuntimeLogOutput((current) =>
+          appendTerminalText(
+            current,
+            `${current.endsWith('\n') || current.length === 0 ? '' : '\n'}$ ${activity.command}\n`,
+            240_000,
+          ),
+        );
       }
 
       setConsoleEntries((current) => {
@@ -1649,30 +1887,26 @@ export function BuilderProjectWorkspace({
         return next.slice(0, 250);
       });
 
-      if (activity.kind === 'exec' && activity.status !== 'running' && targetTerminalId) {
-        updateTerminal(targetTerminalId, (current) => {
-          const footer =
-            activity.status === 'error'
-              ? `\n[process exited with error${activity.exitCode != null ? ` ${activity.exitCode}` : ''}]\n`
-              : activity.exitCode != null
-                ? `\n[process exited ${activity.exitCode}]\n`
-                : '\n';
-          return {
-            ...current,
-            output: `${current.output}${footer}`,
-          };
-        });
+      if (activity.kind === 'exec' && activity.status !== 'running') {
+        const footer =
+          activity.status === 'error'
+            ? `\n[process exited with error${activity.exitCode != null ? ` ${activity.exitCode}` : ''}]\n`
+            : activity.exitCode != null
+              ? `\n[process exited ${activity.exitCode}]\n`
+              : '\n';
+        setRuntimeLogOutput((current) => appendTerminalText(current, footer, 240_000));
       }
 
       if (activity.kind === 'preview') {
         setPreviewUrl(activity.url);
         setViewTab('preview');
-        if (targetTerminalId) {
-          updateTerminal(targetTerminalId, (current) => ({
-            ...current,
-            output: `${current.output}${current.output.endsWith('\n') || current.output.length === 0 ? '' : '\n'}[preview ready] ${activity.url}\n`,
-          }));
-        }
+        setRuntimeLogOutput((current) =>
+          appendTerminalText(
+            current,
+            `${current.endsWith('\n') || current.length === 0 ? '' : '\n'}[preview ready] ${activity.url}\n`,
+            240_000,
+          ),
+        );
       }
     },
     onFinish: async () => {
@@ -1701,16 +1935,25 @@ export function BuilderProjectWorkspace({
 
   const selectedFileRecord = selectedFilePath ? fileRecords[selectedFilePath] : undefined;
   const selectedEditorValue = selectedFilePath
-    ? (draftContents[selectedFilePath] ?? selectedFileRecord?.content ?? '')
+    ? selectedFileRecord?.kind === 'text'
+      ? (draftContents[selectedFilePath] ?? selectedFileRecord?.content ?? '')
+      : ''
     : '';
   const selectedFileLines = useMemo(
     () => (selectedEditorValue ? selectedEditorValue.split('\n') : []),
     [selectedEditorValue],
   );
+  const runtimeLogBuffer = useMemo(() => {
+    const formattedEntries = formatRuntimeLogBuffer(consoleEntries);
+    return runtimeLogOutput.trim().length > 0 ? `${formattedEntries}\n\n${runtimeLogOutput}` : formattedEntries;
+  }, [consoleEntries, runtimeLogOutput]);
   const previewSource = buildPreviewSource(selectedFilePath, {
     content: selectedEditorValue,
     error: selectedFileRecord?.error ?? null,
     isLoading: selectedFileRecord?.isLoading ?? false,
+    kind: selectedFileRecord?.kind ?? 'text',
+    mimeType: selectedFileRecord?.mimeType ?? null,
+    size: selectedFileRecord?.size ?? 0,
   });
   const errorItems = useMemo(() => {
     const items: string[] = [];
@@ -1837,12 +2080,14 @@ export function BuilderProjectWorkspace({
               <WorkbenchPane
                 bottomTab={bottomTab}
                 consoleEntries={consoleEntries}
+                runtimeLogBuffer={runtimeLogBuffer}
                 dirtyFiles={dirtyFiles}
                 errorItems={errorItems}
                 draftContents={draftContents}
                 openFiles={openFiles}
                 onClearConsole={() => {
                   setConsoleEntries([]);
+                  setRuntimeLogOutput('');
                   clearActiveTerminal();
                 }}
                 onCloseFile={closeFile}
@@ -1858,6 +2103,7 @@ export function BuilderProjectWorkspace({
                 previewRefreshKey={previewRefreshKey}
                 previewSource={previewSource}
                 previewUrl={previewUrl}
+                setPreviewUrl={setPreviewUrl}
                 selectedFileLines={selectedFileLines}
                 selectedFilePath={selectedFilePath}
                 selectedFileRecord={selectedFileRecord}
@@ -1893,6 +2139,7 @@ export function BuilderProjectWorkspace({
                 terminalHeight={terminalHeight}
                 canvasState={project.metadata?.canvas}
                 onPersistCanvas={persistCanvas}
+                runtimeProvider={runtimeProvider}
                 tree={tree}
                 treeError={treeError}
                 expandedFolders={expandedFolders}
@@ -1906,6 +2153,8 @@ export function BuilderProjectWorkspace({
                 onRequestPrompt={setPromptSuggestion}
                 onRefreshTree={() => void refreshTree()}
                 isRefreshingTree={isRefreshingTree}
+                onRestartRuntime={() => void restartRuntime()}
+                isRestartingRuntime={isRestartingRuntime}
                 isPreviewFullscreen={isPreviewFullscreen}
                 sourceUrl={project.metadata?.sourceUrl || ''}
                 projectId={project.id}
@@ -1933,12 +2182,14 @@ export function BuilderProjectWorkspace({
                 <WorkbenchPane
                   bottomTab={bottomTab}
                   consoleEntries={consoleEntries}
+                  runtimeLogBuffer={runtimeLogBuffer}
                   dirtyFiles={dirtyFiles}
                   errorItems={errorItems}
                   draftContents={draftContents}
                   openFiles={openFiles}
                   onClearConsole={() => {
                     setConsoleEntries([]);
+                    setRuntimeLogOutput('');
                     clearActiveTerminal();
                   }}
                   onCloseFile={closeFile}
@@ -1954,6 +2205,7 @@ export function BuilderProjectWorkspace({
                   previewRefreshKey={previewRefreshKey}
                   previewSource={previewSource}
                   previewUrl={previewUrl}
+                  setPreviewUrl={setPreviewUrl}
                   selectedFileLines={selectedFileLines}
                   selectedFilePath={selectedFilePath}
                   selectedFileRecord={selectedFileRecord}
@@ -1989,6 +2241,7 @@ export function BuilderProjectWorkspace({
                   terminalHeight={terminalHeight}
                   canvasState={project.metadata?.canvas}
                   onPersistCanvas={persistCanvas}
+                  runtimeProvider={runtimeProvider}
                   tree={tree}
                   treeError={treeError}
                   expandedFolders={expandedFolders}
@@ -2002,6 +2255,8 @@ export function BuilderProjectWorkspace({
                   onRequestPrompt={setPromptSuggestion}
                   onRefreshTree={() => void refreshTree()}
                   isRefreshingTree={isRefreshingTree}
+                  onRestartRuntime={() => void restartRuntime()}
+                  isRestartingRuntime={isRestartingRuntime}
                   isPreviewFullscreen={isPreviewFullscreen}
                   sourceUrl={project.metadata?.sourceUrl || ''}
                   projectId={project.id}
@@ -2227,6 +2482,7 @@ function WorkbenchPane({
   selectedFileLines,
   treeError,
   previewUrl,
+  setPreviewUrl,
   previewPath,
   setPreviewPath,
   previewIframeSrc,
@@ -2234,6 +2490,7 @@ function WorkbenchPane({
   previewRefreshKey,
   setPreviewRefreshKey,
   consoleEntries,
+  runtimeLogBuffer,
   errorItems,
   bottomTab,
   setBottomTab,
@@ -2252,6 +2509,8 @@ function WorkbenchPane({
   onRequestPrompt,
   onRefreshTree,
   isRefreshingTree,
+  onRestartRuntime,
+  isRestartingRuntime,
   onTerminalInputChange,
   onTerminalHistoryNavigate,
   onRunTerminalCommand,
@@ -2259,6 +2518,7 @@ function WorkbenchPane({
   setActiveTerminalId,
   canvasState,
   onPersistCanvas,
+  runtimeProvider,
   startTerminalResize,
   isPreviewFullscreen,
   setIsPreviewFullscreen,
@@ -2293,6 +2553,7 @@ function WorkbenchPane({
   selectedFileLines: string[];
   treeError: string | null;
   previewUrl: string;
+  setPreviewUrl: React.Dispatch<React.SetStateAction<string>>;
   previewPath: string;
   setPreviewPath: React.Dispatch<React.SetStateAction<string>>;
   previewIframeSrc: string | undefined;
@@ -2300,6 +2561,7 @@ function WorkbenchPane({
   previewRefreshKey: number;
   setPreviewRefreshKey: React.Dispatch<React.SetStateAction<number>>;
   consoleEntries: BuildConsoleEntry[];
+  runtimeLogBuffer: string;
   errorItems: string[];
   bottomTab: BottomTab;
   setBottomTab: React.Dispatch<React.SetStateAction<BottomTab>>;
@@ -2318,6 +2580,8 @@ function WorkbenchPane({
   onRequestPrompt: (prompt: string) => void;
   onRefreshTree: () => void;
   isRefreshingTree: boolean;
+  onRestartRuntime: () => void;
+  isRestartingRuntime: boolean;
   onTerminalInputChange: (value: string) => void;
   onTerminalHistoryNavigate: (direction: 'up' | 'down', terminalId?: string) => void;
   onRunTerminalCommand: (value?: string, terminalId?: string) => Promise<void>;
@@ -2325,6 +2589,7 @@ function WorkbenchPane({
   setActiveTerminalId: React.Dispatch<React.SetStateAction<string | null>>;
   canvasState?: BuilderCanvasState | null;
   onPersistCanvas: (state: BuilderCanvasState) => Promise<void>;
+  runtimeProvider: 'e2b' | 'local' | 'codesandbox' | 'webcontainers';
   startTerminalResize: (event: React.PointerEvent<HTMLDivElement>) => void;
   isPreviewFullscreen: boolean;
   setIsPreviewFullscreen: React.Dispatch<React.SetStateAction<boolean>>;
@@ -2334,20 +2599,23 @@ function WorkbenchPane({
   projectName: string;
 }) {
   const [fileQuery, setFileQuery] = useState('');
-  const terminalEndRef = useRef<HTMLDivElement>(null);
-  const terminalInputRef = useRef<HTMLInputElement>(null);
   const activeTerminal = useMemo(
     () => terminals.find((terminal) => terminal.id === activeTerminalId) ?? terminals[0] ?? null,
     [activeTerminalId, terminals],
   );
   const filteredTree = useMemo(() => filterWorkspaceTree(tree, fileQuery), [fileQuery, tree]);
   const selectedEditorValue = selectedFilePath
-    ? (draftContents[selectedFilePath] ?? selectedFileRecord?.content ?? '')
+    ? selectedFileRecord?.kind === 'text'
+      ? (draftContents[selectedFilePath] ?? selectedFileRecord?.content ?? '')
+      : ''
     : '';
-  const isSelectedFileEditable = selectedFilePath ? isEditableFile(selectedFilePath) : false;
+  const isSelectedFileEditable =
+    selectedFilePath && selectedFileRecord?.kind === 'text' ? isEditableFile(selectedFilePath) : false;
   const isSelectedFileDirty = selectedFilePath ? Boolean(dirtyFiles[selectedFilePath]) : false;
   const isSelectedFileSaving = selectedFilePath ? Boolean(savingFiles[selectedFilePath]) : false;
   const selectedSaveError = selectedFilePath ? saveErrors[selectedFilePath] : null;
+  const selectedFilePreviewKind = getFilePreviewKind(selectedFilePath, selectedFileRecord);
+  const selectedFileAssetUrl = selectedFilePath ? getWorkspaceRawAssetUrl(projectId, selectedFilePath) : null;
   const availableWorkspaceToolTabs = useMemo<BuilderAppToolTabId[]>(
     () => (isAppWorkspace ? BUILDER_APP_TOOL_TABS.map((tab) => tab.id) : WEB_WORKSPACE_TOOL_TABS),
     [isAppWorkspace],
@@ -2359,10 +2627,6 @@ function WorkbenchPane({
         .filter((tab): tab is BuilderAppToolTabDefinition => tab !== null),
     [openAppTabs],
   );
-
-  useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ block: 'end' });
-  }, [activeTerminal?.output]);
 
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1.5 p-2 pl-0">
@@ -2681,6 +2945,16 @@ function WorkbenchPane({
                             <div className="mt-0.5 flex items-center gap-2 text-[11px] text-white/35">
                               <span>{getFileExtension(selectedFilePath) || 'file'}</span>
                               <span>•</span>
+                              <span>{formatFileSize(selectedFileRecord?.size ?? 0)}</span>
+                              {selectedFileRecord?.mimeType ? (
+                                <>
+                                  <span>•</span>
+                                  <span className="truncate">
+                                    {selectedFileRecord.mimeType.replace('; charset=utf-8', '')}
+                                  </span>
+                                </>
+                              ) : null}
+                              <span>•</span>
                               <span>{isSelectedFileEditable ? 'Editable' : 'Preview only'}</span>
                               {isSelectedFileDirty ? (
                                 <>
@@ -2753,27 +3027,112 @@ function WorkbenchPane({
                             />
                           </div>
                         ) : (
-                          <ScrollArea className="h-full">
-                            <div className="min-w-full font-mono text-[12px]">
-                              {selectedFileLines.length === 0 ? (
-                                <div className="px-4 py-6 text-white/35">This file is empty.</div>
-                              ) : (
-                                selectedFileLines.map((line, index) => (
-                                  <div
-                                    key={`${selectedFilePath}-${index + 1}`}
-                                    className="grid grid-cols-[64px_minmax(0,1fr)]"
-                                  >
-                                    <div className="select-none border-r border-white/6 px-4 py-1.5 text-right text-white/25">
-                                      {index + 1}
-                                    </div>
-                                    <pre className="overflow-x-auto px-4 py-1.5 text-white/85">
-                                      <code>{line || ' '}</code>
-                                    </pre>
+                          <>
+                            {selectedFileRecord?.kind === 'text' ? (
+                              <ScrollArea className="h-full">
+                                <div className="min-w-full font-mono text-[12px]">
+                                  {selectedFileLines.length === 0 ? (
+                                    <div className="px-4 py-6 text-white/35">This file is empty.</div>
+                                  ) : (
+                                    selectedFileLines.map((line, index) => (
+                                      <div
+                                        key={`${selectedFilePath}-${index + 1}`}
+                                        className="grid grid-cols-[64px_minmax(0,1fr)]"
+                                      >
+                                        <div className="select-none border-r border-white/6 px-4 py-1.5 text-right text-white/25">
+                                          {index + 1}
+                                        </div>
+                                        <pre className="overflow-x-auto px-4 py-1.5 text-white/85">
+                                          <code>{line || ' '}</code>
+                                        </pre>
+                                      </div>
+                                    ))
+                                  )}
+                                </div>
+                              </ScrollArea>
+                            ) : selectedFilePreviewKind === 'image' && selectedFileAssetUrl ? (
+                              <ScrollArea className="h-full">
+                                <div className="flex min-h-full items-center justify-center p-6">
+                                  <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-white/8 bg-[#101010] p-4">
+                                    <img
+                                      src={selectedFileAssetUrl}
+                                      alt={selectedFilePath}
+                                      className="mx-auto max-h-[70vh] w-auto max-w-full rounded-xl object-contain"
+                                    />
                                   </div>
-                                ))
-                              )}
-                            </div>
-                          </ScrollArea>
+                                </div>
+                              </ScrollArea>
+                            ) : selectedFilePreviewKind === 'video' && selectedFileAssetUrl ? (
+                              <div className="flex h-full items-center justify-center p-6">
+                                <div className="w-full max-w-5xl overflow-hidden rounded-2xl border border-white/8 bg-[#101010] p-4">
+                                  <video
+                                    controls
+                                    className="mx-auto max-h-[72vh] w-full rounded-xl bg-black"
+                                    src={selectedFileAssetUrl}
+                                  />
+                                </div>
+                              </div>
+                            ) : selectedFilePreviewKind === 'audio' && selectedFileAssetUrl ? (
+                              <div className="flex h-full items-center justify-center p-6">
+                                <div className="w-full max-w-2xl rounded-2xl border border-white/8 bg-[#101010] p-6">
+                                  <div className="mb-4 flex items-center gap-3 text-white/75">
+                                    <FileAudio2 className="size-5 text-sky-300" />
+                                    <div>
+                                      <div className="text-sm font-medium text-white">
+                                        {selectedFilePath.split('/').pop()}
+                                      </div>
+                                      <div className="text-xs text-white/40">
+                                        {selectedFileRecord?.mimeType ?? 'audio file'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <audio controls className="w-full" src={selectedFileAssetUrl} />
+                                </div>
+                              </div>
+                            ) : selectedFilePreviewKind === 'pdf' && selectedFileAssetUrl ? (
+                              <iframe
+                                title={selectedFilePath}
+                                src={selectedFileAssetUrl}
+                                className="h-full w-full bg-white"
+                              />
+                            ) : (
+                              <div className="flex h-full items-center justify-center p-6">
+                                <div className="max-w-lg rounded-2xl border border-white/8 bg-white/[0.03] p-6 text-center">
+                                  <div className="mx-auto mb-4 flex size-14 items-center justify-center rounded-2xl border border-white/10 bg-white/[0.04]">
+                                    {selectedFilePreviewKind === 'image' ? (
+                                      <FileImage className="size-6 text-sky-300" />
+                                    ) : selectedFilePreviewKind === 'video' ? (
+                                      <FileVideo2 className="size-6 text-violet-300" />
+                                    ) : selectedFilePreviewKind === 'audio' ? (
+                                      <FileAudio2 className="size-6 text-emerald-300" />
+                                    ) : (
+                                      <File className="size-6 text-white/55" />
+                                    )}
+                                  </div>
+                                  <div className="text-base font-semibold text-white">Preview not available inline</div>
+                                  <p className="mt-2 text-sm leading-6 text-white/45">
+                                    This file is stored as binary data. You can still open it directly in a new tab.
+                                  </p>
+                                  <div className="mt-4 flex items-center justify-center gap-2 text-xs text-white/35">
+                                    <span>{selectedFileRecord?.mimeType ?? 'application/octet-stream'}</span>
+                                    <span>•</span>
+                                    <span>{formatFileSize(selectedFileRecord?.size ?? 0)}</span>
+                                  </div>
+                                  {selectedFileAssetUrl ? (
+                                    <a
+                                      href={selectedFileAssetUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="mt-5 inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white transition hover:bg-white/[0.08]"
+                                    >
+                                      <ExternalLink className="size-4" />
+                                      Open file
+                                    </a>
+                                  ) : null}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     )}
@@ -2847,7 +3206,16 @@ function WorkbenchPane({
 
                   <div className={cn('flex-1 p-3', isPreviewFullscreen && 'p-0')}>
                     <div className="h-full overflow-hidden rounded-xl border border-white/8 bg-white">
-                      {previewIframeSrc ? (
+                      {runtimeProvider === 'webcontainers' ? (
+                        <BuilderWebContainerPreview
+                          projectId={projectId}
+                          previewPath={previewPath}
+                          previewRefreshKey={previewRefreshKey}
+                          fallbackSource={previewSource}
+                          isFullscreen={isPreviewFullscreen}
+                          onPreviewUrlChange={setPreviewUrl}
+                        />
+                      ) : previewIframeSrc ? (
                         <iframe
                           key={`${previewIframeSrc}-${previewRefreshKey}`}
                           title="Builder preview"
@@ -2917,6 +3285,17 @@ function WorkbenchPane({
                   <div className="flex items-center gap-1 rounded-lg bg-[#181818] p-0.5">
                     <button
                       type="button"
+                      onClick={() => setBottomTab('logs')}
+                      className={cn(
+                        'rounded-md px-3 py-1.5 text-xs font-medium transition',
+                        bottomTab === 'logs' ? 'bg-[#2a2a2a] text-white' : 'text-white/40 hover:text-white/70',
+                      )}
+                    >
+                      <Activity className="mr-1 inline size-3.5" />
+                      Runtime
+                    </button>
+                    <button
+                      type="button"
                       onClick={() => setBottomTab('terminal')}
                       className={cn(
                         'rounded-md px-3 py-1.5 text-xs font-medium transition',
@@ -2939,18 +3318,56 @@ function WorkbenchPane({
                     </button>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={() => setShowTerminal(false)}
-                    className="rounded-md p-1.5 text-white/35 transition hover:bg-white/6 hover:text-white"
-                    title="Collapse bottom panel"
-                  >
-                    <ChevronDown className="size-4" />
-                  </button>
+                  <div className="flex items-center gap-2">
+                    {bottomTab === 'terminal' && activeTerminal ? (
+                      <div className="hidden rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/35 md:inline-flex">
+                        {activeTerminal.cwd}
+                      </div>
+                    ) : null}
+                    {bottomTab === 'terminal' && runtimeProvider === 'codesandbox' ? (
+                      <button
+                        type="button"
+                        onClick={onRestartRuntime}
+                        disabled={isRestartingRuntime}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/60 transition hover:bg-white/[0.08] hover:text-white disabled:pointer-events-none disabled:opacity-55"
+                        title="Restart CodeSandbox runtime"
+                      >
+                        {isRestartingRuntime ? (
+                          <Loader2 className="size-3 animate-spin" />
+                        ) : (
+                          <RefreshCw className="size-3" />
+                        )}
+                        Restart CodeSandbox
+                      </button>
+                    ) : null}
+                    {bottomTab === 'logs' ? (
+                      <div className="hidden rounded-full border border-white/8 bg-white/[0.04] px-2.5 py-1 text-[11px] text-white/35 md:inline-flex">
+                        Live builder activity
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => setShowTerminal(false)}
+                      className="rounded-md p-1.5 text-white/35 transition hover:bg-white/6 hover:text-white"
+                      title="Collapse bottom panel"
+                    >
+                      <ChevronDown className="size-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="min-h-0 flex-1">
-                  {bottomTab === 'terminal' ? (
+                  {bottomTab === 'logs' ? (
+                    <div className="flex h-full flex-col">
+                      <div className="flex items-center justify-between border-b border-white/8 px-3 py-2 text-[11px] text-white/35">
+                        <div className="uppercase tracking-[0.22em]">Runtime Logs</div>
+                        <div className="truncate">{runtimeProvider}</div>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-hidden bg-[#09090d]">
+                        <BuilderTerminalSurface active buffer={runtimeLogBuffer} className="px-2 py-2" readOnly />
+                      </div>
+                    </div>
+                  ) : bottomTab === 'terminal' ? (
                     <div className="flex h-full flex-col">
                       <div className="flex items-center justify-between gap-3 border-b border-white/8 px-2 py-2">
                         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
@@ -2995,66 +3412,35 @@ function WorkbenchPane({
                       </div>
 
                       <div className="min-h-0 flex-1 overflow-hidden">
-                        <ScrollArea className="h-full" onClick={() => terminalInputRef.current?.focus()}>
-                          <div className="min-h-full bg-[#0d0d0d] px-4 py-4">
-                            {activeTerminal?.commandError ? (
-                              <div className="mb-3 font-mono text-[12px] leading-6 text-red-300/85">
-                                [terminal error] {activeTerminal.commandError}
+                        {activeTerminal ? (
+                          <div className="flex h-full flex-col bg-[#09090d]">
+                            {activeTerminal.commandError ? (
+                              <div className="border-b border-red-400/15 bg-red-500/8 px-3 py-2 text-xs text-red-200">
+                                {activeTerminal.commandError}
                               </div>
                             ) : null}
-
-                            {activeTerminal?.output ? (
-                              <pre className="overflow-x-auto whitespace-pre-wrap font-mono text-[12px] leading-6 text-white/78">
-                                <code>{activeTerminal.output}</code>
-                              </pre>
-                            ) : null}
-
-                            <div className="flex items-center gap-2 font-mono text-[12px] leading-6 text-white/88">
-                              <span className="shrink-0 text-sky-300/80">
-                                {formatTerminalPrompt(activeTerminal?.cwd ?? DEFAULT_REMOTE_TERMINAL_ROOT)}
-                              </span>
-                              <input
-                                ref={terminalInputRef}
-                                value={activeTerminal?.input ?? ''}
-                                onChange={(event) => onTerminalInputChange(event.target.value)}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter' && !event.shiftKey) {
-                                    event.preventDefault();
-                                    void onRunTerminalCommand(undefined, activeTerminal?.id ?? undefined);
-                                    return;
-                                  }
-
-                                  if (event.key === 'ArrowUp') {
-                                    event.preventDefault();
-                                    onTerminalHistoryNavigate('up', activeTerminal?.id ?? undefined);
-                                    return;
-                                  }
-
-                                  if (event.key === 'ArrowDown') {
-                                    event.preventDefault();
-                                    onTerminalHistoryNavigate('down', activeTerminal?.id ?? undefined);
-                                  }
-                                }}
-                                className="min-w-0 flex-1 bg-transparent font-mono text-[12px] text-white outline-none"
-                                spellCheck={false}
-                                autoCapitalize="off"
-                                autoCorrect="off"
+                            <div className="min-h-0 flex-1 overflow-hidden">
+                              <BuilderTerminalSurface
+                                active
+                                buffer={activeTerminal.output}
+                                className="px-2 py-2"
+                                cwd={activeTerminal.cwd}
+                                input={activeTerminal.input}
+                                isBusy={activeTerminal.isRunning}
+                                onHistoryNavigate={(direction) =>
+                                  onTerminalHistoryNavigate(direction, activeTerminal.id)
+                                }
+                                onInputChange={onTerminalInputChange}
+                                onStop={() => onStopTerminalCommand(activeTerminal.id)}
+                                onSubmit={() => void onRunTerminalCommand(undefined, activeTerminal.id)}
                               />
-                              {activeTerminal?.isRunning ? (
-                                <button
-                                  type="button"
-                                  onClick={() => onStopTerminalCommand(activeTerminal.id)}
-                                  className="rounded-md p-1 text-white/40 transition hover:bg-white/6 hover:text-white"
-                                  title="Stop command"
-                                >
-                                  <Square className="size-3.5" />
-                                </button>
-                              ) : null}
                             </div>
-
-                            <div ref={terminalEndRef} />
                           </div>
-                        </ScrollArea>
+                        ) : (
+                          <div className="flex h-full items-center justify-center text-sm text-white/35">
+                            No terminal session selected.
+                          </div>
+                        )}
                       </div>
                     </div>
                   ) : (

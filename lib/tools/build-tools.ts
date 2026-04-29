@@ -9,6 +9,7 @@ import { r2Client, R2_BUCKET_NAME, R2_PUBLIC_URL } from '@/lib/r2';
 import { serverEnv } from '@/env/server';
 import {
   type BuilderRuntime,
+  type BuilderRuntimeProvider,
   type BuilderSandbox,
   createBuilderBox,
   installBunInBuilderBox,
@@ -35,13 +36,22 @@ class BoxManager {
   private userId: string;
   private runtime: BuilderRuntime;
   private existingBoxId: string | null;
+  private provider: Exclude<BuilderRuntimeProvider, 'webcontainers'>;
+  private workspacePath: string | null;
   private mcpServerNames: string[] = [];
   private _hasVercelMcp: boolean = false;
 
-  constructor(userId: string, existingBoxId?: string | null) {
+  constructor(
+    userId: string,
+    existingBoxId?: string | null,
+    provider: Exclude<BuilderRuntimeProvider, 'webcontainers'> = 'e2b',
+    workspacePath?: string | null,
+  ) {
     this.userId = userId;
     this.runtime = 'node';
     this.existingBoxId = existingBoxId ?? null;
+    this.provider = provider;
+    this.workspacePath = workspacePath ?? null;
   }
 
   /** May only be called before the first getBox() call. */
@@ -79,7 +89,13 @@ class BoxManager {
 
   private async reconnectBox(boxId: string): Promise<BuilderSandbox> {
     try {
-      const box = await reconnectBuilderBox(boxId);
+      const box = await reconnectBuilderBox({
+        boxId,
+        userId: this.userId,
+        runtime: this.runtime,
+        provider: this.provider,
+        workspacePath: this.workspacePath,
+      });
       return box;
     } catch (err) {
       console.warn(`${LOG_PREFIX} Failed to reconnect to Box ${boxId}, creating new one:`, err);
@@ -92,6 +108,8 @@ class BoxManager {
     const created = await createBuilderBox({
       userId: this.userId,
       runtime: this.runtime,
+      provider: this.provider,
+      workspacePath: this.workspacePath,
     });
 
     this.mcpServerNames = [...created.mcpServerNames];
@@ -113,6 +131,10 @@ class BoxManager {
 
   hasVercelMcp(): boolean {
     return this._hasVercelMcp;
+  }
+
+  supportsBoxAgent() {
+    return this.provider === 'e2b';
   }
 
   /** Disconnect without destroying the box — it persists for future messages. */
@@ -1013,8 +1035,9 @@ export function createBuildTools(
   uploadedFiles: UploadedFileContext[] = [],
   seedWorkspacePath?: string | null,
   seedRemoteRoot = BUILDER_REMOTE_PROJECT_PATH,
+  provider: Exclude<BuilderRuntimeProvider, 'webcontainers'> = 'e2b',
 ) {
-  const boxManager = new BoxManager(userId, existingBoxId);
+  const boxManager = new BoxManager(userId, existingBoxId, provider, seedWorkspacePath);
 
   const tools = {
     box_init: createBoxInitTool(dataStream, boxManager, uploadedFiles, seedWorkspacePath, seedRemoteRoot),
@@ -1022,9 +1045,9 @@ export function createBuildTools(
     box_exec: createBoxExecTool(dataStream, boxManager),
     box_write_file: createBoxWriteFileTool(dataStream, boxManager),
     box_download: createBoxDownloadTool(dataStream, boxManager),
-    box_agent: createBoxAgentTool(dataStream, boxManager, uploadedFiles),
     box_code: createBoxCodeTool(dataStream, boxManager),
     box_browse_page: createBrowsePageTool(dataStream),
+    ...(boxManager.supportsBoxAgent() ? { box_agent: createBoxAgentTool(dataStream, boxManager, uploadedFiles) } : {}),
   };
 
   return {

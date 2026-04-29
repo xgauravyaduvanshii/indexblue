@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { bootstrapBuilderAppProjectSession } from '@/lib/builder/app-session';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
 
 const execFileAsync = promisify(execFile);
 
@@ -65,6 +66,7 @@ export async function POST(request: Request) {
   const file = formData.get('file');
   const parsedMode = modeSchema.safeParse(formData.get('mode'));
   const mode = parsedMode.success ? parsedMode.data : 'web';
+  const runtimeProvider = resolveBuilderRuntimeProviderForMode(mode);
 
   if (!(file instanceof File)) {
     return Response.json({ error: 'ZIP file is required.' }, { status: 400 });
@@ -107,6 +109,7 @@ export async function POST(request: Request) {
           archiveName: file.name,
           builderMode: mode,
           platform: mode === 'apps' ? 'mobile' : 'web',
+          runtimeProvider,
         },
       },
     });

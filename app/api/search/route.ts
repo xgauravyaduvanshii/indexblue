@@ -70,7 +70,10 @@ import { CohereChatModelOptions } from '@ai-sdk/cohere';
 import { xai } from '@ai-sdk/xai';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 import { BUILDER_REMOTE_PROJECT_PATH } from '@/lib/builder/paths';
-import { getBuilderProjectRemoteWorkspaceRoot } from '@/lib/builder/project-metadata';
+import {
+  getBuilderProjectRemoteWorkspaceRoot,
+  getBuilderProjectServerRuntimeProvider,
+} from '@/lib/builder/project-metadata';
 import { createBuildTools } from '@/lib/tools';
 
 interface CriticalChecksResult {
@@ -879,6 +882,9 @@ export async function POST(req: Request) {
       const builderRemoteWorkspaceRoot = builderProjectContext
         ? getBuilderProjectRemoteWorkspaceRoot(builderProjectContext)
         : BUILDER_REMOTE_PROJECT_PATH;
+      const builderRuntimeProvider = builderProjectContext
+        ? getBuilderProjectServerRuntimeProvider(builderProjectContext)
+        : 'e2b';
       const buildToolkit =
         isBuilderProjectMode && lightweightUser && builderProjectContext
           ? createBuildTools(
@@ -888,6 +894,7 @@ export async function POST(req: Request) {
               [],
               builderProjectContext.workspacePath ?? null,
               builderRemoteWorkspaceRoot,
+              builderRuntimeProvider,
             )
           : null;
       const buildToolNames = buildToolkit ? Object.keys(buildToolkit.tools) : [];

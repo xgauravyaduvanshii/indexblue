@@ -7,10 +7,27 @@ import { maindb } from './index';
 import { buildSession, builderProject, chat } from './schema';
 import { createBuildSession, saveNewChatWithStream } from './queries';
 import { ChatSDKError } from '@/lib/errors';
+import type { BuilderProjectMetadata } from '@/lib/builder/project-metadata';
 
 export type BuilderProjectSourceType = 'github' | 'zip' | 'template' | 'local' | 'ssh' | 'empty';
 
-type BuilderProjectMetadata = typeof builderProject.$inferInsert['metadata'];
+type BuilderProjectInsertMetadata = (typeof builderProject.$inferInsert)['metadata'];
+
+export type BuilderProjectListItem = {
+  id: string;
+  name: string;
+  sourceType: string;
+  workspacePath: string | null;
+  theme: string | null;
+  metadata: BuilderProjectMetadata | null;
+  createdAt: Date;
+  updatedAt: Date;
+  chatId: string;
+  buildStatus: string | null;
+  buildRuntime: string | null;
+  boxId: string | null;
+  chatUpdatedAt: Date | null;
+};
 
 export async function createBuilderProjectWorkspace({
   userId,
@@ -25,7 +42,7 @@ export async function createBuilderProjectWorkspace({
   sourceType: BuilderProjectSourceType;
   workspacePath?: string | null;
   theme?: string | null;
-  metadata?: BuilderProjectMetadata;
+  metadata?: BuilderProjectInsertMetadata;
 }) {
   const chatId = uuidv7();
   const streamId = `stream-${uuidv7()}`;
@@ -65,37 +82,39 @@ export async function createBuilderProjectWorkspace({
   }
 }
 
-export const getBuilderProjectByIdForUser = cache(async ({ projectId, userId }: { projectId: string; userId: string }) => {
-  try {
-    const [project] = await maindb
-      .select({
-        id: builderProject.id,
-        userId: builderProject.userId,
-        chatId: builderProject.chatId,
-        name: builderProject.name,
-        sourceType: builderProject.sourceType,
-        workspacePath: builderProject.workspacePath,
-        theme: builderProject.theme,
-        metadata: builderProject.metadata,
-        createdAt: builderProject.createdAt,
-        updatedAt: builderProject.updatedAt,
-        chatUpdatedAt: chat.updatedAt,
-        buildStatus: buildSession.status,
-        buildRuntime: buildSession.runtime,
-        boxId: buildSession.boxId,
-      })
-      .from(builderProject)
-      .innerJoin(chat, eq(builderProject.chatId, chat.id))
-      .leftJoin(buildSession, eq(buildSession.chatId, builderProject.chatId))
-      .where(and(eq(builderProject.id, projectId), eq(builderProject.userId, userId)))
-      .limit(1);
+export const getBuilderProjectByIdForUser = cache(
+  async ({ projectId, userId }: { projectId: string; userId: string }) => {
+    try {
+      const [project] = await maindb
+        .select({
+          id: builderProject.id,
+          userId: builderProject.userId,
+          chatId: builderProject.chatId,
+          name: builderProject.name,
+          sourceType: builderProject.sourceType,
+          workspacePath: builderProject.workspacePath,
+          theme: builderProject.theme,
+          metadata: builderProject.metadata,
+          createdAt: builderProject.createdAt,
+          updatedAt: builderProject.updatedAt,
+          chatUpdatedAt: chat.updatedAt,
+          buildStatus: buildSession.status,
+          buildRuntime: buildSession.runtime,
+          boxId: buildSession.boxId,
+        })
+        .from(builderProject)
+        .innerJoin(chat, eq(builderProject.chatId, chat.id))
+        .leftJoin(buildSession, eq(buildSession.chatId, builderProject.chatId))
+        .where(and(eq(builderProject.id, projectId), eq(builderProject.userId, userId)))
+        .limit(1);
 
-    return project ?? null;
-  } catch (error) {
-    console.error('Failed to fetch builder project:', error);
-    throw new ChatSDKError('bad_request:database', 'Failed to load builder project');
-  }
-});
+      return project ?? null;
+    } catch (error) {
+      console.error('Failed to fetch builder project:', error);
+      throw new ChatSDKError('bad_request:database', 'Failed to load builder project');
+    }
+  },
+);
 
 export async function updateBuilderProjectTheme({
   projectId,
@@ -106,7 +125,7 @@ export async function updateBuilderProjectTheme({
   projectId: string;
   userId: string;
   theme: string | null;
-  metadata?: BuilderProjectMetadata;
+  metadata?: BuilderProjectInsertMetadata;
 }) {
   try {
     const [project] = await maindb
@@ -126,7 +145,13 @@ export async function updateBuilderProjectTheme({
   }
 }
 
-export async function listBuilderProjectsByUserId({ userId, limit = 24 }: { userId: string; limit?: number }) {
+export async function listBuilderProjectsByUserId({
+  userId,
+  limit = 24,
+}: {
+  userId: string;
+  limit?: number;
+}): Promise<BuilderProjectListItem[]> {
   try {
     return await maindb
       .select({
@@ -135,11 +160,18 @@ export async function listBuilderProjectsByUserId({ userId, limit = 24 }: { user
         sourceType: builderProject.sourceType,
         workspacePath: builderProject.workspacePath,
         theme: builderProject.theme,
+        metadata: builderProject.metadata,
         createdAt: builderProject.createdAt,
         updatedAt: builderProject.updatedAt,
         chatId: builderProject.chatId,
+        buildStatus: buildSession.status,
+        buildRuntime: buildSession.runtime,
+        boxId: buildSession.boxId,
+        chatUpdatedAt: chat.updatedAt,
       })
       .from(builderProject)
+      .innerJoin(chat, eq(builderProject.chatId, chat.id))
+      .leftJoin(buildSession, eq(buildSession.chatId, builderProject.chatId))
       .where(eq(builderProject.userId, userId))
       .orderBy(desc(builderProject.updatedAt), asc(builderProject.name))
       .limit(limit);

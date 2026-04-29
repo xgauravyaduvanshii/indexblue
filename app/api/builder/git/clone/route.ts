@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { bootstrapBuilderAppProjectSession } from '@/lib/builder/app-session';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
 
 export const runtime = 'nodejs';
 
@@ -57,6 +58,8 @@ export async function POST(request: NextRequest) {
   }
 
   const { repoUrl, authMode, token, sshKey } = parsed.data;
+  const builderMode = parsed.data.mode ?? 'web';
+  const runtimeProvider = resolveBuilderRuntimeProviderForMode(builderMode);
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -145,15 +148,16 @@ export async function POST(request: NextRequest) {
                 sourceUrl: repoUrl,
                 importMeta: {
                   mode: parsed.data.mode ?? 'web',
-                  builderMode: parsed.data.mode ?? 'web',
-                  platform: parsed.data.mode === 'apps' ? 'mobile' : 'web',
+                  builderMode,
+                  platform: builderMode === 'apps' ? 'mobile' : 'web',
+                  runtimeProvider,
                   authMode,
                 },
               },
             });
 
             let previewUrl: string | null = null;
-            if ((parsed.data.mode ?? 'web') === 'apps') {
+            if (builderMode === 'apps') {
               emit(controller, { type: 'log', message: 'Booting mobile app session...' });
               try {
                 const boot = await bootstrapBuilderAppProjectSession({

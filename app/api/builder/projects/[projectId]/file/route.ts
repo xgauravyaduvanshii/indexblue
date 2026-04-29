@@ -1,11 +1,13 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
 import { ensureProjectBuilderBox, getProjectRemoteRoot, writeRemoteProjectTextFile } from '@/lib/builder/app-runtime';
+import { syncBuilderCodeSandboxProjectMirror } from '@/lib/builder/codesandbox';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 import {
   createWorkspaceEntry,
   deleteWorkspaceEntry,
-  readWorkspaceTextFile,
+  readWorkspaceBinaryFile,
+  readWorkspaceFile,
   renameWorkspaceEntry,
   writeWorkspaceTextFile,
 } from '@/lib/builder/workspace';
@@ -52,6 +54,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
   const { searchParams } = new URL(request.url);
   const relativePath = searchParams.get('path');
+  const raw = searchParams.get('raw') === '1';
 
   if (!relativePath) {
     return Response.json({ error: 'path is required.' }, { status: 400 });
@@ -72,8 +75,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 
   try {
-    const content = await readWorkspaceTextFile(project.workspacePath, relativePath);
-    return Response.json({ content });
+    await syncBuilderCodeSandboxProjectMirror({
+      project,
+      userId: session.user.id,
+      resetLocal: true,
+    }).catch(() => undefined);
+
+    if (raw) {
+      const file = await readWorkspaceBinaryFile(project.workspacePath, relativePath);
+      return new Response(Buffer.from(file.content), {
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Length': String(file.size),
+          'Content-Type': file.mimeType,
+        },
+      });
+    }
+
+    const file = await readWorkspaceFile(project.workspacePath, relativePath);
+    return Response.json(file);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to read workspace file.';
     return Response.json({ error: message }, { status: 400 });

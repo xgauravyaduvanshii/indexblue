@@ -3,6 +3,7 @@ import { getUser } from '@/lib/auth-utils';
 import { getBuilderProjectByIdForUser } from '@/lib/db/builder-project-queries';
 import { getMessagesByChatId } from '@/lib/db/queries';
 import { convertToUIMessages } from '@/lib/chat-messages';
+import { syncBuilderCodeSandboxProjectMirror } from '@/lib/builder/codesandbox';
 import { buildWorkspaceTree } from '@/lib/builder/workspace';
 import { BuilderProjectWorkspace } from '@/components/builder-project-workspace';
 
@@ -26,6 +27,12 @@ export default async function BuilderProjectPage({
   if (!project) {
     notFound();
   }
+
+  await syncBuilderCodeSandboxProjectMirror({
+    project,
+    userId: user.id,
+    resetLocal: true,
+  }).catch(() => undefined);
 
   const [dbMessages, initialTree] = await Promise.all([
     getMessagesByChatId({ id: project.chatId, limit: 200 }),

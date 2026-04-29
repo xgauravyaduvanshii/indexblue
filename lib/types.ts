@@ -190,15 +190,16 @@ type spotifySearchTool = InferUITool<typeof spotifySearchTool>;
 type predictionSearchTool = InferUITool<ReturnType<typeof predictionSearchTool>>;
 
 type BuildTools = ReturnType<typeof createBuildTools> extends { tools: infer T } ? T : never;
-type boxInitTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxExecTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxWriteTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxReadTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxListFilesTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxDownloadTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxAgentTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxCodeTool = InferUITool<BuildTools[keyof BuildTools]>;
-type boxBrowsePageTool = InferUITool<BuildTools[keyof BuildTools]>;
+type BuildTool = NonNullable<BuildTools[keyof BuildTools]>;
+type boxInitTool = InferUITool<BuildTool>;
+type boxExecTool = InferUITool<BuildTool>;
+type boxWriteTool = InferUITool<BuildTool>;
+type boxReadTool = InferUITool<BuildTool>;
+type boxListFilesTool = InferUITool<BuildTool>;
+type boxDownloadTool = InferUITool<BuildTool>;
+type boxAgentTool = InferUITool<BuildTool>;
+type boxCodeTool = InferUITool<BuildTool>;
+type boxBrowsePageTool = InferUITool<BuildTool>;
 
 // type mcpSearchTool = InferUITool<typeof mcpSearchTool>;
 

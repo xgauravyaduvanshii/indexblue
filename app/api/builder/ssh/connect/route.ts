@@ -6,6 +6,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
 
 export const runtime = 'nodejs';
 
@@ -94,6 +95,8 @@ export async function POST(request: Request) {
                 port,
                 username,
                 authMode,
+                builderMode: 'ssh',
+                runtimeProvider: resolveBuilderRuntimeProviderForMode('ssh'),
               },
             },
           });
@@ -193,6 +196,8 @@ export async function POST(request: Request) {
                   port,
                   username,
                   authMode,
+                  builderMode: 'ssh',
+                  runtimeProvider: resolveBuilderRuntimeProviderForMode('ssh'),
                 },
               },
             });

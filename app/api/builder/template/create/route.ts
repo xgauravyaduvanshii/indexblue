@@ -4,122 +4,22 @@ import path from 'node:path';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { createExpoAppTemplateWorkspaceFromE2B } from '@/lib/builder/app-session';
+import { createCodeSandboxWorkspaceFromTemplate } from '@/lib/builder/codesandbox';
+import type { BuilderProjectLiveSession } from '@/lib/builder/project-metadata';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
+import { getBuilderTemplateScaffold } from '@/lib/builder/template-scaffolds';
+import { BUILDER_TEMPLATE_IDS, isBuilderTemplateSupportedForProvider } from '@/lib/builder/template-options';
 import { updateBuildSession } from '@/lib/db/queries';
 
 export const runtime = 'nodejs';
 
 const templateSchema = z.object({
-  templateId: z.enum(['next-app', 'static-site', 'node-api', 'expo-app']),
-  mode: z.enum(['web', 'apps']).optional(),
+  templateId: z.enum(BUILDER_TEMPLATE_IDS),
+  mode: z.enum(['local', 'web', 'apps']).optional(),
 });
 
 const TEMPLATES = {
-  'next-app': {
-    name: 'Next App Starter',
-    slug: 'next-app-starter',
-    files: {
-      'package.json': JSON.stringify(
-        {
-          name: 'next-app-starter',
-          private: true,
-          scripts: {
-            dev: 'next dev',
-            build: 'next build',
-            start: 'next start',
-          },
-        },
-        null,
-        2,
-      ),
-      'README.md': '# Next App Starter\n\nA simple template scaffold created from Indexblue Builder.\n',
-      'app/page.tsx': `export default function HomePage() {
-  return (
-    <main style={{ padding: 32, fontFamily: 'sans-serif' }}>
-      <h1>Next App Starter</h1>
-      <p>Your template workspace is ready.</p>
-    </main>
-  );
-}
-`,
-    },
-  },
-  'static-site': {
-    name: 'Static Site',
-    slug: 'static-site-starter',
-    files: {
-      'index.html': `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Static Site Starter</title>
-    <link rel="stylesheet" href="./styles.css" />
-  </head>
-  <body>
-    <main class="shell">
-      <h1>Static Site Starter</h1>
-      <p>Created from the Indexblue web template card.</p>
-    </main>
-  </body>
-</html>
-`,
-      'styles.css': `:root {
-  color-scheme: dark;
-  --bg: #0d1320;
-  --panel: rgba(255, 255, 255, 0.08);
-  --text: #f5f7fb;
-}
-
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: radial-gradient(circle at top, #2d4d7a, var(--bg) 55%);
-  color: var(--text);
-  font-family: sans-serif;
-}
-
-.shell {
-  padding: 32px;
-  border-radius: 24px;
-  background: var(--panel);
-  backdrop-filter: blur(18px);
-}
-`,
-    },
-  },
-  'node-api': {
-    name: 'Node API',
-    slug: 'node-api-starter',
-    files: {
-      'package.json': JSON.stringify(
-        {
-          name: 'node-api-starter',
-          private: true,
-          type: 'module',
-          scripts: {
-            dev: 'node server.js',
-          },
-        },
-        null,
-        2,
-      ),
-      'server.js': `import http from 'node:http';
-
-const server = http.createServer((request, response) => {
-  response.writeHead(200, { 'Content-Type': 'application/json' });
-  response.end(JSON.stringify({ ok: true, route: request.url }));
-});
-
-server.listen(3000, () => {
-  console.log('Node API starter listening on http://localhost:3000');
-});
-`,
-      'README.md': '# Node API Starter\n\nA lightweight Node server scaffold created from Indexblue Builder.\n',
-    },
-  },
   'expo-app': {
     name: 'Expo Mobile Starter',
     slug: 'expo-mobile-starter',
@@ -257,14 +157,31 @@ export async function POST(request: Request) {
   }
 
   try {
-    const template = TEMPLATES[parsed.data.templateId];
     const builderMode = parsed.data.mode ?? (parsed.data.templateId === 'expo-app' ? 'apps' : 'web');
+    const runtimeProvider = resolveBuilderRuntimeProviderForMode(builderMode);
+    const template =
+      parsed.data.templateId === 'expo-app'
+        ? TEMPLATES['expo-app']
+        : getBuilderTemplateScaffold(parsed.data.templateId);
+
+    if (builderMode === 'web' && !isBuilderTemplateSupportedForProvider(parsed.data.templateId, runtimeProvider)) {
+      return Response.json(
+        {
+          error: `The ${parsed.data.templateId} template is not supported with the ${runtimeProvider} runtime provider.`,
+        },
+        { status: 400 },
+      );
+    }
+
     const templateBucket = builderMode === 'apps' ? 'app-templates' : 'web-templates';
     let baseDir: string;
     let liveSessionMetadata: {
       boxId: string;
       buildRuntime: 'node';
-      liveSession: NonNullable<Awaited<ReturnType<typeof createExpoAppTemplateWorkspaceFromE2B>>['liveSession']>;
+      liveSession: BuilderProjectLiveSession;
+      previewPort?: number | null;
+      startCommand?: string | null;
+      sandboxTemplateId?: string | null;
     } | null = null;
 
     if (parsed.data.templateId === 'expo-app') {
@@ -276,6 +193,20 @@ export async function POST(request: Request) {
         boxId: liveTemplate.boxId,
         buildRuntime: liveTemplate.buildRuntime,
         liveSession: liveTemplate.liveSession,
+      };
+    } else if (builderMode === 'web' && runtimeProvider === 'codesandbox') {
+      const liveTemplate = await createCodeSandboxWorkspaceFromTemplate({
+        templateId: parsed.data.templateId,
+        userId: session.user.id,
+      });
+      baseDir = liveTemplate.workspacePath;
+      liveSessionMetadata = {
+        boxId: liveTemplate.sandboxId,
+        buildRuntime: 'node',
+        liveSession: liveTemplate.liveSession,
+        previewPort: liveTemplate.previewPort,
+        startCommand: liveTemplate.startCommand,
+        sandboxTemplateId: liveTemplate.sandboxTemplateId,
       };
     } else {
       baseDir = path.join(tmpdir(), 'indexblue-builder-workspaces', templateBucket, `${template.slug}-${Date.now()}`);
@@ -295,6 +226,12 @@ export async function POST(request: Request) {
           templateSlug: template.slug,
           builderMode,
           platform: builderMode === 'apps' ? 'mobile' : 'web',
+          runtimeProvider,
+          ...(liveSessionMetadata?.previewPort ? { previewPort: liveSessionMetadata.previewPort } : {}),
+          ...(liveSessionMetadata?.startCommand ? { startCommand: liveSessionMetadata.startCommand } : {}),
+          ...(liveSessionMetadata?.sandboxTemplateId
+            ? { codesandboxTemplateId: liveSessionMetadata.sandboxTemplateId }
+            : {}),
         },
         ...(liveSessionMetadata ? { liveSession: liveSessionMetadata.liveSession } : {}),
       },
@@ -313,7 +250,10 @@ export async function POST(request: Request) {
       ok: true,
       templateId: parsed.data.templateId,
       templateName: template.name,
-      createdPath: baseDir,
+      createdPath:
+        runtimeProvider === 'codesandbox' && liveSessionMetadata
+          ? `CodeSandbox • ${liveSessionMetadata.liveSession.sandboxId}`
+          : baseDir,
       projectId: project.id,
       redirectTo,
       previewUrl: liveSessionMetadata?.liveSession.previewUrl ?? null,

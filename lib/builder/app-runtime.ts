@@ -10,7 +10,11 @@ import {
   seedBuilderWorkspace,
 } from '@/lib/builder/box';
 import { BUILDER_BOX_ROOT } from '@/lib/builder/paths';
-import { getBuilderProjectRemoteWorkspaceRoot, type BuilderProjectMetadata } from '@/lib/builder/project-metadata';
+import {
+  getBuilderProjectRemoteWorkspaceRoot,
+  getBuilderProjectServerRuntimeProvider,
+  type BuilderProjectMetadata,
+} from '@/lib/builder/project-metadata';
 import {
   appendBuilderProjectJobLog,
   createBuilderProjectEvent,
@@ -107,10 +111,13 @@ export async function ensureProjectBuilderBox({
   reseedWorkspace?: boolean;
 }) {
   const runtime = project.buildRuntime && project.buildRuntime.trim().length > 0 ? project.buildRuntime : 'node';
+  const runtimeProvider = getBuilderProjectServerRuntimeProvider(project as any);
   const { box, isNew } = await ensureBuilderBox({
     userId,
     existingBoxId: project.boxId ?? null,
     runtime: runtime as any,
+    provider: runtimeProvider,
+    workspacePath: project.workspacePath ?? null,
   });
 
   if (isNew) {

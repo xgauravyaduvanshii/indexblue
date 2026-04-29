@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
 
 export const runtime = 'nodejs';
 
@@ -64,6 +65,7 @@ export async function POST(request: Request) {
     const rootDir = path.join(tmpdir(), 'indexblue-builder-workspaces', 'local', parsed.data.space);
     await mkdir(rootDir, { recursive: true });
     const createdPath = await ensureUniqueFolder(rootDir, safeFolderName);
+    const runtimeProvider = resolveBuilderRuntimeProviderForMode('local');
     const { project, redirectTo } = await createBuilderProjectFromWorkspace({
       userId: session.user.id,
       sourceType: 'local',
@@ -73,6 +75,8 @@ export async function POST(request: Request) {
         sourceLabel: 'Local Workspace',
         importMeta: {
           space: parsed.data.space,
+          builderMode: 'local',
+          runtimeProvider,
         },
       },
     });

@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { auth } from '@/lib/auth';
 import { createBuilderProjectFromWorkspace } from '@/lib/builder/projects';
+import { resolveBuilderRuntimeProviderForMode } from '@/lib/builder/runtime-provider';
 
 export const runtime = 'nodejs';
 
@@ -24,6 +25,8 @@ export async function POST(request: NextRequest) {
       sourceLabel: 'Empty Start',
       importMeta: {
         devOnly: true,
+        builderMode: 'web',
+        runtimeProvider: resolveBuilderRuntimeProviderForMode('web'),
       },
     },
   });

@@ -261,6 +261,7 @@ export async function createExpoAppTemplateWorkspaceFromE2B({ userId }: { userId
   const { box } = await ensureBuilderBox({
     userId,
     runtime: 'node',
+    provider: 'e2b',
   });
 
   const remoteRoot = BUILDER_BOX_ROOT;
@@ -307,6 +308,8 @@ export async function bootstrapBuilderAppProjectSession({
     userId: project.userId,
     existingBoxId: project.boxId ?? project.metadata?.liveSession?.sandboxId ?? null,
     runtime: (project.buildRuntime?.trim() || 'node') as any,
+    provider: 'e2b',
+    workspacePath: project.workspacePath ?? null,
   });
 
   if (isNew) {

@@ -25,10 +25,11 @@ import {
   Terminal,
   Upload,
 } from 'lucide-react';
-import { SciraLogo } from '@/components/logos/scira-logo';
+import { BuilderPageHeader } from '@/components/builder-page-header';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Orb } from '@/components/ui/orb';
 import { signIn, useSession } from '@/lib/auth-client';
+import { type BuilderTemplateId, getBuilderTemplateOptions } from '@/lib/builder/template-options';
 import { cn } from '@/lib/utils';
 
 type BuilderMode = 'local' | 'web' | 'apps' | 'ssh';
@@ -50,7 +51,7 @@ type ZipTreeNode = {
   type: 'file' | 'folder';
   children?: ZipTreeNode[];
 };
-type TemplateId = 'next-app' | 'static-site' | 'node-api' | 'expo-app';
+type TemplateId = BuilderTemplateId;
 
 const SECTIONS = {
   local: {
@@ -118,37 +119,7 @@ const SPACE_OPTIONS: Array<{ value: FolderSpace; label: string }> = [
   { value: 'sandbox', label: 'Sandbox' },
 ];
 
-const TEMPLATE_OPTIONS: Array<{
-  id: TemplateId;
-  name: string;
-  description: string;
-  modes: BuilderMode[];
-}> = [
-  {
-    id: 'next-app',
-    name: 'Next App Starter',
-    description: 'App Router scaffold for a new product workspace.',
-    modes: ['web'],
-  },
-  {
-    id: 'static-site',
-    name: 'Static Site',
-    description: 'Simple HTML and CSS starter for quick web pages.',
-    modes: ['web'],
-  },
-  {
-    id: 'node-api',
-    name: 'Node API',
-    description: 'Small server starter for API or backend experiments.',
-    modes: ['web'],
-  },
-  {
-    id: 'expo-app',
-    name: 'Expo Mobile Starter',
-    description: 'Expo Router starter for mobile app flows with a real app shell.',
-    modes: ['apps'],
-  },
-];
+const DEFAULT_WEB_RUNTIME_PROVIDER = process.env.NEXT_PUBLIC_BUILDER_WEB_RUNTIME_PROVIDER ?? 'codesandbox';
 
 export default function BuilderPage() {
   const router = useRouter();
@@ -679,492 +650,171 @@ export default function BuilderPage() {
 
   return (
     <div className="relative flex h-dvh w-full flex-col items-center overflow-hidden bg-background">
-      <div className="relative z-10 flex min-h-0 w-full max-w-lg flex-1 flex-col items-center p-4 safe-area-inset-bottom sm:p-6">
-        <header className="flex w-full shrink-0 items-center pt-2 sm:pt-4">
-          <div className="flex items-center gap-2">
-            <SciraLogo className="size-7 shrink-0 sm:size-8" />
-            <h1 className="font-pixel text-base tracking-wider text-foreground sm:text-2xl">Builder</h1>
-          </div>
-        </header>
+      <div className="relative z-10 flex min-h-0 w-full max-w-6xl flex-1 flex-col p-4 safe-area-inset-bottom sm:p-6">
+        <BuilderPageHeader active="builder" className="shrink-0 pt-2 sm:pt-4" />
 
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center">
-          <div className="pointer-events-none relative size-[260px] opacity-30 sm:size-[300px]">
-            <Orb
-              colors={activeSection?.colors ?? ['#6B5B4F', '#8AA4D6']}
-              agentState={null}
-              volumeMode="auto"
-              inputVolumeRef={{ current: 0 }}
-              outputVolumeRef={{ current: 0 }}
-              className="h-full w-full"
-            />
-          </div>
-        </div>
-
-        <div className="flex w-full shrink-0 flex-col gap-3 pb-2 sm:pb-0">
-          {!mode && (
-            <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
-              <div className="flex flex-col gap-1">
-                <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
-                  <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
-                    Builder modes
-                  </span>
-                </div>
-                <p className="text-sm font-medium text-foreground">Choose how you want to start</p>
-                <p className="text-xs leading-relaxed text-muted-foreground/70">
-                  Pick a builder mode and we will open only that context in the center.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                <ModeButton
-                  icon={HardDrive}
-                  label="Local"
-                  onClick={() => {
-                    setMode('local');
-                    setSubView('default');
-                  }}
-                />
-                <ModeButton
-                  icon={AppWindow}
-                  label="Web"
-                  onClick={() => {
-                    setMode('web');
-                    setSubView('default');
-                  }}
-                />
-                <ModeButton
-                  icon={Smartphone}
-                  label="Apps"
-                  onClick={() => {
-                    setMode('apps');
-                    setSubView('default');
-                  }}
-                />
-                <ModeButton
-                  icon={Terminal}
-                  label="SSH"
-                  onClick={() => {
-                    setMode('ssh');
-                    setSubView('default');
-                  }}
-                />
-              </div>
+        <div className="mx-auto flex min-h-0 w-full max-w-lg flex-1 flex-col items-center">
+          <div className="flex min-h-0 w-full flex-1 items-center justify-center">
+            <div className="pointer-events-none relative size-[260px] opacity-30 sm:size-[300px]">
+              <Orb
+                colors={activeSection?.colors ?? ['#6B5B4F', '#8AA4D6']}
+                agentState={null}
+                volumeMode="auto"
+                inputVolumeRef={{ current: 0 }}
+                outputVolumeRef={{ current: 0 }}
+                className="h-full w-full"
+              />
             </div>
-          )}
+          </div>
 
-          {mode && activeSection && (
-            <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
-              {!hideSectionIntro && (
-                <>
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex flex-col gap-1">
-                      <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
-                        <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
-                          {activeSection.badge}
-                        </span>
+          <div className="flex w-full shrink-0 flex-col gap-3 pb-2 sm:pb-0">
+            {!mode && (
+              <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
+                <div className="flex flex-col gap-1">
+                  <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
+                    <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
+                      Builder modes
+                    </span>
+                  </div>
+                  <p className="text-sm font-medium text-foreground">Choose how you want to start</p>
+                  <p className="text-xs leading-relaxed text-muted-foreground/70">
+                    Pick a builder mode and we will open only that context in the center.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <ModeButton
+                    icon={HardDrive}
+                    label="Local"
+                    onClick={() => {
+                      setMode('local');
+                      setSubView('default');
+                    }}
+                  />
+                  <ModeButton
+                    icon={AppWindow}
+                    label="Web"
+                    onClick={() => {
+                      setMode('web');
+                      setSubView('default');
+                    }}
+                  />
+                  <ModeButton
+                    icon={Smartphone}
+                    label="Apps"
+                    onClick={() => {
+                      setMode('apps');
+                      setSubView('default');
+                    }}
+                  />
+                  <ModeButton
+                    icon={Terminal}
+                    label="SSH"
+                    onClick={() => {
+                      setMode('ssh');
+                      setSubView('default');
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {mode && activeSection && (
+              <div className="flex w-full flex-col gap-4 rounded-xl border border-border/60 bg-card/30 p-4">
+                {!hideSectionIntro && (
+                  <>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-col gap-1">
+                        <div className="mb-1 inline-flex w-fit items-center gap-1.5 rounded-full border border-border/50 bg-muted/40 px-2.5 py-1">
+                          <span className="font-pixel text-[9px] uppercase tracking-wider text-muted-foreground/70">
+                            {activeSection.badge}
+                          </span>
+                        </div>
+                        <p className="text-sm font-medium text-foreground">{activeSection.title}</p>
+                        <p className="text-xs leading-relaxed text-muted-foreground/70">{activeSection.description}</p>
                       </div>
-                      <p className="text-sm font-medium text-foreground">{activeSection.title}</p>
-                      <p className="text-xs leading-relaxed text-muted-foreground/70">{activeSection.description}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMode(null);
+                          setSubView('default');
+                        }}
+                        className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
+                      >
+                        Back
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMode(null);
-                        setSubView('default');
-                      }}
-                      className="flex h-9 shrink-0 items-center justify-center rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground transition-colors hover:bg-muted/40"
-                    >
-                      Back
-                    </button>
-                  </div>
 
-                  <div className="flex flex-col gap-1.5">
-                    {activeSection.features.map(({ icon: Icon, label }) => (
-                      <div key={label} className="flex items-center gap-2.5">
-                        <div className="flex size-6 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10">
-                          <Icon className="size-3.5 text-primary" aria-hidden />
+                    <div className="flex flex-col gap-1.5">
+                      {activeSection.features.map(({ icon: Icon, label }) => (
+                        <div key={label} className="flex items-center gap-2.5">
+                          <div className="flex size-6 shrink-0 items-center justify-center rounded-md border border-primary/20 bg-primary/10">
+                            <Icon className="size-3.5 text-primary" aria-hidden />
+                          </div>
+                          <span className="text-xs text-foreground/70">{label}</span>
                         </div>
-                        <span className="text-xs text-foreground/70">{label}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
+                      ))}
+                    </div>
+                  </>
+                )}
 
-              {mode === 'local' && (
-                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
-                  {subView === 'default' && (
-                    <>
-                      <div className="flex flex-col gap-1">
-                        <p className="text-xs font-medium text-foreground">Local workspace actions</p>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                          Start from a folder on this machine, clone an existing repository, or create a new workspace.
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
-                        <ActionButton icon={FolderOpen} label="Open Folder" onClick={handleOpenFolder} />
-                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
-                        <ActionButton
-                          icon={FolderPlus}
-                          label="Create Folder"
-                          onClick={() => {
-                            setLocalFolderError(null);
-                            setIsCreateFolderOpen(true);
-                          }}
-                        />
-                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
-                      </div>
-
-                      {(localFolderError || openedFolderName || createdFolderPath) && (
-                        <div className="rounded-lg border border-border/50 bg-card/50 p-3 text-[11px]">
-                          {localFolderError && <p className="text-red-400">{localFolderError}</p>}
-                          {openedFolderName && <p className="text-foreground/80">Opened folder: {openedFolderName}</p>}
-                          {createdFolderPath && <p className="text-emerald-400">Created folder: {createdFolderPath}</p>}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {subView === 'git' && (
-                    <GitCloneCard
-                      sessionUser={!!session?.user}
-                      githubConnected={githubConnected}
-                      isLoadingRepos={isLoadingRepos}
-                      repoLoadError={repoLoadError}
-                      githubRepos={githubRepos}
-                      selectedRepoId={selectedRepoId}
-                      onSelectRepo={handleSelectRepo}
-                      repoUrl={repoUrl}
-                      onRepoUrlChange={setRepoUrl}
-                      cloneError={cloneError}
-                      cloneTargetDir={cloneTargetDir}
-                      cloneLogs={cloneLogs}
-                      isCloning={isCloning}
-                      onClone={handleCloneRepository}
-                      onBack={closeGitCloneCard}
-                    />
-                  )}
-
-                  {subView === 'zip' && (
-                    <ZipImportCard
-                      zipFile={zipFile}
-                      setZipFile={setZipFile}
-                      zipImportError={zipImportError}
-                      zipArchiveName={zipArchiveName}
-                      zipExtractedPath={zipExtractedPath}
-                      zipTree={zipTree}
-                      isImportingZip={isImportingZip}
-                      onImport={handleZipImport}
-                      onBack={closeZipImportCard}
-                      onOpenPreview={() => setIsZipPreviewOpen(true)}
-                    />
-                  )}
-                </div>
-              )}
-
-              {mode === 'web' && (
-                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
-                  {subView === 'default' && (
-                    <>
-                      <div className="flex flex-col gap-1">
-                        <p className="text-xs font-medium text-foreground">Web builder actions</p>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                          Pull in a repository, start from a template, or import a zipped project to continue building
-                          online.
-                        </p>
-                      </div>
-                      <div className={cn('grid grid-cols-1 gap-2', isDevMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
-                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
-                        <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
-                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
-                        {isDevMode ? (
-                          <ActionButton icon={Layers3} label="Empty Start" onClick={() => void handleEmptyStart()} />
-                        ) : null}
-                      </div>
-
-                      {(templateCreatedName || templateCreatedPath) && (
-                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
-                          {templateCreatedName && (
-                            <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>
-                          )}
-                          {templateCreatedPath && (
-                            <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {subView === 'git' && (
-                    <GitCloneCard
-                      sessionUser={!!session?.user}
-                      githubConnected={githubConnected}
-                      isLoadingRepos={isLoadingRepos}
-                      repoLoadError={repoLoadError}
-                      githubRepos={githubRepos}
-                      selectedRepoId={selectedRepoId}
-                      onSelectRepo={handleSelectRepo}
-                      repoUrl={repoUrl}
-                      onRepoUrlChange={setRepoUrl}
-                      cloneError={cloneError}
-                      cloneTargetDir={cloneTargetDir}
-                      cloneLogs={cloneLogs}
-                      isCloning={isCloning}
-                      onClone={handleCloneRepository}
-                      onBack={closeGitCloneCard}
-                    />
-                  )}
-
-                  {subView === 'template' && (
-                    <TemplateCard
-                      mode={mode}
-                      selectedTemplateId={selectedTemplateId}
-                      onSelectTemplate={setSelectedTemplateId}
-                      templateError={templateError}
-                      isCreatingTemplate={isCreatingTemplate}
-                      templateCreatedPath={templateCreatedPath}
-                      onCreate={handleCreateTemplate}
-                      onBack={closeTemplateCard}
-                    />
-                  )}
-
-                  {subView === 'zip' && (
-                    <ZipImportCard
-                      zipFile={zipFile}
-                      setZipFile={setZipFile}
-                      zipImportError={zipImportError}
-                      zipArchiveName={zipArchiveName}
-                      zipExtractedPath={zipExtractedPath}
-                      zipTree={zipTree}
-                      isImportingZip={isImportingZip}
-                      onImport={handleZipImport}
-                      onBack={closeZipImportCard}
-                      onOpenPreview={() => setIsZipPreviewOpen(true)}
-                    />
-                  )}
-                </div>
-              )}
-
-              {mode === 'apps' && (
-                <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
-                  {subView === 'default' && (
-                    <>
-                      <div className="flex flex-col gap-1">
-                        <p className="text-xs font-medium text-foreground">Mobile app builder actions</p>
-                        <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                          Bring in an Expo or React Native project, import a zipped mobile workspace, or start from a
-                          mobile template.
-                        </p>
-                      </div>
-                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                        <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
-                        <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
-                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
-                      </div>
-
-                      {(templateCreatedName || templateCreatedPath) && (
-                        <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
-                          {templateCreatedName && (
-                            <p className="text-[11px] text-emerald-300">{templateCreatedName} created successfully.</p>
-                          )}
-                          {templateCreatedPath && (
-                            <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )}
-
-                  {subView === 'git' && (
-                    <GitCloneCard
-                      sessionUser={!!session?.user}
-                      githubConnected={githubConnected}
-                      isLoadingRepos={isLoadingRepos}
-                      repoLoadError={repoLoadError}
-                      githubRepos={githubRepos}
-                      selectedRepoId={selectedRepoId}
-                      onSelectRepo={handleSelectRepo}
-                      repoUrl={repoUrl}
-                      onRepoUrlChange={setRepoUrl}
-                      cloneError={cloneError}
-                      cloneTargetDir={cloneTargetDir}
-                      cloneLogs={cloneLogs}
-                      isCloning={isCloning}
-                      onClone={handleCloneRepository}
-                      onBack={closeGitCloneCard}
-                    />
-                  )}
-
-                  {subView === 'template' && (
-                    <TemplateCard
-                      mode={mode}
-                      selectedTemplateId={selectedTemplateId}
-                      onSelectTemplate={setSelectedTemplateId}
-                      templateError={templateError}
-                      isCreatingTemplate={isCreatingTemplate}
-                      templateCreatedPath={templateCreatedPath}
-                      onCreate={handleCreateTemplate}
-                      onBack={closeTemplateCard}
-                    />
-                  )}
-
-                  {subView === 'zip' && (
-                    <ZipImportCard
-                      zipFile={zipFile}
-                      setZipFile={setZipFile}
-                      zipImportError={zipImportError}
-                      zipArchiveName={zipArchiveName}
-                      zipExtractedPath={zipExtractedPath}
-                      zipTree={zipTree}
-                      isImportingZip={isImportingZip}
-                      onImport={handleZipImport}
-                      onBack={closeZipImportCard}
-                      onOpenPreview={() => setIsZipPreviewOpen(true)}
-                    />
-                  )}
-                </div>
-              )}
-
-              {mode === 'ssh' && (
-                <div className="max-h-[56vh] overflow-y-auto rounded-xl border border-border/50 bg-background/50 p-3 pr-2">
-                  <div className="flex flex-col gap-3">
+                {mode === 'local' && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
                     {subView === 'default' && (
                       <>
-                        <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
-
                         <div className="flex flex-col gap-1">
-                          <p className="text-xs font-medium text-foreground">SSH connection</p>
+                          <p className="text-xs font-medium text-foreground">Local workspace actions</p>
                           <p className="text-[11px] leading-relaxed text-muted-foreground/70">
-                            Enter your server details and test the connection with config, private key, or password
-                            mode.
+                            Start from a folder on this machine, clone an existing repository, or create a new
+                            workspace.
                           </p>
                         </div>
-
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          <InputField
-                            label="Host"
-                            value={sshHost}
-                            onChange={setSshHost}
-                            placeholder="example.server.com"
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                          <ActionButton icon={FolderOpen} label="Open Folder" onClick={handleOpenFolder} />
+                          <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                          <ActionButton
+                            icon={FolderPlus}
+                            label="Create Folder"
+                            onClick={() => {
+                              setLocalFolderError(null);
+                              setIsCreateFolderOpen(true);
+                            }}
                           />
-                          <InputField label="Port" value={sshPort} onChange={setSshPort} placeholder="22" />
-                          <InputField
-                            label="Username"
-                            value={sshUsername}
-                            onChange={setSshUsername}
-                            placeholder="ubuntu"
-                            className="sm:col-span-2"
-                          />
+                          <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
                         </div>
 
-                        <div className="flex flex-col gap-2">
-                          <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
-                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                            <AuthButton
-                              active={sshAuthMode === 'config'}
-                              icon={Upload}
-                              label="Config File"
-                              onClick={() => setSshAuthMode('config')}
-                            />
-                            <AuthButton
-                              active={sshAuthMode === 'key'}
-                              icon={KeyRound}
-                              label="Private Key"
-                              onClick={() => setSshAuthMode('key')}
-                            />
-                            <AuthButton
-                              active={sshAuthMode === 'password'}
-                              icon={Lock}
-                              label="Password"
-                              onClick={() => setSshAuthMode('password')}
-                            />
-                          </div>
-                        </div>
-
-                        {sshAuthMode === 'config' && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                            <p className="text-[11px] text-muted-foreground/80">Upload or paste your SSH config.</p>
-                            <input
-                              type="file"
-                              accept=".conf,.config,text/plain"
-                              onChange={(event) => void handleReadTextFile(event, setSshConfigContent)}
-                              className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
-                            />
-                            <textarea
-                              value={sshConfigContent}
-                              onChange={(event) => setSshConfigContent(event.target.value)}
-                              placeholder="Host my-server&#10;  HostName example.server.com&#10;  User ubuntu"
-                              className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
-                            />
+                        {(localFolderError || openedFolderName || createdFolderPath) && (
+                          <div className="rounded-lg border border-border/50 bg-card/50 p-3 text-[11px]">
+                            {localFolderError && <p className="text-red-400">{localFolderError}</p>}
+                            {openedFolderName && (
+                              <p className="text-foreground/80">Opened folder: {openedFolderName}</p>
+                            )}
+                            {createdFolderPath && (
+                              <p className="text-emerald-400">Created folder: {createdFolderPath}</p>
+                            )}
                           </div>
                         )}
-
-                        {sshAuthMode === 'key' && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                            <p className="text-[11px] text-muted-foreground/80">Upload or paste a private key.</p>
-                            <input
-                              type="file"
-                              accept=".pem,.key,text/plain"
-                              onChange={(event) => void handleReadTextFile(event, setSshKeyContent)}
-                              className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
-                            />
-                            <textarea
-                              value={sshKeyContent}
-                              onChange={(event) => setSshKeyContent(event.target.value)}
-                              placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
-                              className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
-                            />
-                            <InputField
-                              label="Optional passphrase"
-                              value={sshPassphrase}
-                              onChange={setSshPassphrase}
-                              placeholder="Passphrase"
-                              type="password"
-                            />
-                          </div>
-                        )}
-
-                        {sshAuthMode === 'password' && (
-                          <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
-                            <p className="text-[11px] text-muted-foreground/80">
-                              Enter the server password for reachability checks.
-                            </p>
-                            <input
-                              type="password"
-                              value={sshPassword}
-                              onChange={(event) => setSshPassword(event.target.value)}
-                              placeholder="SSH password"
-                              className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
-                            />
-                          </div>
-                        )}
-
-                        {sshError && <p className="text-[11px] text-red-400">{sshError}</p>}
-                        {sshStatus && <p className="text-[11px] text-emerald-400">SSH status: {sshStatus}</p>}
-
-                        {sshLogs.length > 0 && (
-                          <div className="max-h-40 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
-                            {sshLogs.map((log, index) => (
-                              <p
-                                key={`${log}-${index}`}
-                                className="text-[11px] leading-relaxed text-muted-foreground/80"
-                              >
-                                {log}
-                              </p>
-                            ))}
-                          </div>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={handleConnectSsh}
-                          disabled={isConnectingSsh}
-                          className="flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
-                        >
-                          <Server className="size-3.5" />
-                          {isConnectingSsh ? 'Connecting...' : 'Connect with SSH'}
-                        </button>
                       </>
+                    )}
+
+                    {subView === 'git' && (
+                      <GitCloneCard
+                        sessionUser={!!session?.user}
+                        githubConnected={githubConnected}
+                        isLoadingRepos={isLoadingRepos}
+                        repoLoadError={repoLoadError}
+                        githubRepos={githubRepos}
+                        selectedRepoId={selectedRepoId}
+                        onSelectRepo={handleSelectRepo}
+                        repoUrl={repoUrl}
+                        onRepoUrlChange={setRepoUrl}
+                        cloneError={cloneError}
+                        cloneTargetDir={cloneTargetDir}
+                        cloneLogs={cloneLogs}
+                        isCloning={isCloning}
+                        onClone={handleCloneRepository}
+                        onBack={closeGitCloneCard}
+                      />
                     )}
 
                     {subView === 'zip' && (
@@ -1182,10 +832,337 @@ export default function BuilderPage() {
                       />
                     )}
                   </div>
-                </div>
-              )}
-            </div>
-          )}
+                )}
+
+                {mode === 'web' && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
+                    {subView === 'default' && (
+                      <>
+                        <div className="flex flex-col gap-1">
+                          <p className="text-xs font-medium text-foreground">Web builder actions</p>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                            Pull in a repository, start from a template, or import a zipped project to continue building
+                            online.
+                          </p>
+                        </div>
+                        <div className={cn('grid grid-cols-1 gap-2', isDevMode ? 'sm:grid-cols-4' : 'sm:grid-cols-3')}>
+                          <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                          <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
+                          <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
+                          {isDevMode ? (
+                            <ActionButton icon={Layers3} label="Empty Start" onClick={() => void handleEmptyStart()} />
+                          ) : null}
+                        </div>
+
+                        {(templateCreatedName || templateCreatedPath) && (
+                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                            {templateCreatedName && (
+                              <p className="text-[11px] text-emerald-300">
+                                {templateCreatedName} created successfully.
+                              </p>
+                            )}
+                            {templateCreatedPath && (
+                              <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {subView === 'git' && (
+                      <GitCloneCard
+                        sessionUser={!!session?.user}
+                        githubConnected={githubConnected}
+                        isLoadingRepos={isLoadingRepos}
+                        repoLoadError={repoLoadError}
+                        githubRepos={githubRepos}
+                        selectedRepoId={selectedRepoId}
+                        onSelectRepo={handleSelectRepo}
+                        repoUrl={repoUrl}
+                        onRepoUrlChange={setRepoUrl}
+                        cloneError={cloneError}
+                        cloneTargetDir={cloneTargetDir}
+                        cloneLogs={cloneLogs}
+                        isCloning={isCloning}
+                        onClone={handleCloneRepository}
+                        onBack={closeGitCloneCard}
+                      />
+                    )}
+
+                    {subView === 'template' && (
+                      <TemplateCard
+                        mode={mode}
+                        selectedTemplateId={selectedTemplateId}
+                        onSelectTemplate={setSelectedTemplateId}
+                        templateError={templateError}
+                        isCreatingTemplate={isCreatingTemplate}
+                        templateCreatedPath={templateCreatedPath}
+                        onCreate={handleCreateTemplate}
+                        onBack={closeTemplateCard}
+                      />
+                    )}
+
+                    {subView === 'zip' && (
+                      <ZipImportCard
+                        zipFile={zipFile}
+                        setZipFile={setZipFile}
+                        zipImportError={zipImportError}
+                        zipArchiveName={zipArchiveName}
+                        zipExtractedPath={zipExtractedPath}
+                        zipTree={zipTree}
+                        isImportingZip={isImportingZip}
+                        onImport={handleZipImport}
+                        onBack={closeZipImportCard}
+                        onOpenPreview={() => setIsZipPreviewOpen(true)}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {mode === 'apps' && (
+                  <div className="flex flex-col gap-3 rounded-xl border border-border/50 bg-background/50 p-3">
+                    {subView === 'default' && (
+                      <>
+                        <div className="flex flex-col gap-1">
+                          <p className="text-xs font-medium text-foreground">Mobile app builder actions</p>
+                          <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                            Bring in an Expo or React Native project, import a zipped mobile workspace, or start from a
+                            mobile template.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                          <ActionButton icon={GitBranch} label="Clone Git Repo" onClick={openGitCloneCard} />
+                          <ActionButton icon={Shapes} label="Templates" onClick={openTemplateCard} />
+                          <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
+                        </div>
+
+                        {(templateCreatedName || templateCreatedPath) && (
+                          <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3">
+                            {templateCreatedName && (
+                              <p className="text-[11px] text-emerald-300">
+                                {templateCreatedName} created successfully.
+                              </p>
+                            )}
+                            {templateCreatedPath && (
+                              <p className="mt-1 text-[11px] text-emerald-200/75">{templateCreatedPath}</p>
+                            )}
+                          </div>
+                        )}
+                      </>
+                    )}
+
+                    {subView === 'git' && (
+                      <GitCloneCard
+                        sessionUser={!!session?.user}
+                        githubConnected={githubConnected}
+                        isLoadingRepos={isLoadingRepos}
+                        repoLoadError={repoLoadError}
+                        githubRepos={githubRepos}
+                        selectedRepoId={selectedRepoId}
+                        onSelectRepo={handleSelectRepo}
+                        repoUrl={repoUrl}
+                        onRepoUrlChange={setRepoUrl}
+                        cloneError={cloneError}
+                        cloneTargetDir={cloneTargetDir}
+                        cloneLogs={cloneLogs}
+                        isCloning={isCloning}
+                        onClone={handleCloneRepository}
+                        onBack={closeGitCloneCard}
+                      />
+                    )}
+
+                    {subView === 'template' && (
+                      <TemplateCard
+                        mode={mode}
+                        selectedTemplateId={selectedTemplateId}
+                        onSelectTemplate={setSelectedTemplateId}
+                        templateError={templateError}
+                        isCreatingTemplate={isCreatingTemplate}
+                        templateCreatedPath={templateCreatedPath}
+                        onCreate={handleCreateTemplate}
+                        onBack={closeTemplateCard}
+                      />
+                    )}
+
+                    {subView === 'zip' && (
+                      <ZipImportCard
+                        zipFile={zipFile}
+                        setZipFile={setZipFile}
+                        zipImportError={zipImportError}
+                        zipArchiveName={zipArchiveName}
+                        zipExtractedPath={zipExtractedPath}
+                        zipTree={zipTree}
+                        isImportingZip={isImportingZip}
+                        onImport={handleZipImport}
+                        onBack={closeZipImportCard}
+                        onOpenPreview={() => setIsZipPreviewOpen(true)}
+                      />
+                    )}
+                  </div>
+                )}
+
+                {mode === 'ssh' && (
+                  <div className="max-h-[56vh] overflow-y-auto rounded-xl border border-border/50 bg-background/50 p-3 pr-2">
+                    <div className="flex flex-col gap-3">
+                      {subView === 'default' && (
+                        <>
+                          <ActionButton icon={FileArchive} label="Import ZIP" onClick={openZipImportCard} />
+
+                          <div className="flex flex-col gap-1">
+                            <p className="text-xs font-medium text-foreground">SSH connection</p>
+                            <p className="text-[11px] leading-relaxed text-muted-foreground/70">
+                              Enter your server details and test the connection with config, private key, or password
+                              mode.
+                            </p>
+                          </div>
+
+                          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <InputField
+                              label="Host"
+                              value={sshHost}
+                              onChange={setSshHost}
+                              placeholder="example.server.com"
+                            />
+                            <InputField label="Port" value={sshPort} onChange={setSshPort} placeholder="22" />
+                            <InputField
+                              label="Username"
+                              value={sshUsername}
+                              onChange={setSshUsername}
+                              placeholder="ubuntu"
+                              className="sm:col-span-2"
+                            />
+                          </div>
+
+                          <div className="flex flex-col gap-2">
+                            <p className="text-[11px] text-muted-foreground/80">Authentication method</p>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                              <AuthButton
+                                active={sshAuthMode === 'config'}
+                                icon={Upload}
+                                label="Config File"
+                                onClick={() => setSshAuthMode('config')}
+                              />
+                              <AuthButton
+                                active={sshAuthMode === 'key'}
+                                icon={KeyRound}
+                                label="Private Key"
+                                onClick={() => setSshAuthMode('key')}
+                              />
+                              <AuthButton
+                                active={sshAuthMode === 'password'}
+                                icon={Lock}
+                                label="Password"
+                                onClick={() => setSshAuthMode('password')}
+                              />
+                            </div>
+                          </div>
+
+                          {sshAuthMode === 'config' && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                              <p className="text-[11px] text-muted-foreground/80">Upload or paste your SSH config.</p>
+                              <input
+                                type="file"
+                                accept=".conf,.config,text/plain"
+                                onChange={(event) => void handleReadTextFile(event, setSshConfigContent)}
+                                className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
+                              />
+                              <textarea
+                                value={sshConfigContent}
+                                onChange={(event) => setSshConfigContent(event.target.value)}
+                                placeholder="Host my-server&#10;  HostName example.server.com&#10;  User ubuntu"
+                                className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
+                              />
+                            </div>
+                          )}
+
+                          {sshAuthMode === 'key' && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                              <p className="text-[11px] text-muted-foreground/80">Upload or paste a private key.</p>
+                              <input
+                                type="file"
+                                accept=".pem,.key,text/plain"
+                                onChange={(event) => void handleReadTextFile(event, setSshKeyContent)}
+                                className="rounded-lg border border-border/50 bg-card/60 px-3 py-2 text-xs text-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary/15 file:px-2 file:py-1"
+                              />
+                              <textarea
+                                value={sshKeyContent}
+                                onChange={(event) => setSshKeyContent(event.target.value)}
+                                placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                                className="min-h-28 rounded-lg border border-border/50 bg-card/60 px-3 py-2 font-mono text-[11px] text-foreground outline-none placeholder:text-muted-foreground/50 focus:border-primary/40"
+                              />
+                              <InputField
+                                label="Optional passphrase"
+                                value={sshPassphrase}
+                                onChange={setSshPassphrase}
+                                placeholder="Passphrase"
+                                type="password"
+                              />
+                            </div>
+                          )}
+
+                          {sshAuthMode === 'password' && (
+                            <div className="flex flex-col gap-2 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
+                              <p className="text-[11px] text-muted-foreground/80">
+                                Enter the server password for reachability checks.
+                              </p>
+                              <input
+                                type="password"
+                                value={sshPassword}
+                                onChange={(event) => setSshPassword(event.target.value)}
+                                placeholder="SSH password"
+                                className="h-10 rounded-lg border border-border/50 bg-card/60 px-3 text-xs text-foreground outline-none transition-colors placeholder:text-muted-foreground/50 focus:border-primary/40"
+                              />
+                            </div>
+                          )}
+
+                          {sshError && <p className="text-[11px] text-red-400">{sshError}</p>}
+                          {sshStatus && <p className="text-[11px] text-emerald-400">SSH status: {sshStatus}</p>}
+
+                          {sshLogs.length > 0 && (
+                            <div className="max-h-40 overflow-y-auto rounded-lg border border-border/50 bg-black/20 p-2">
+                              {sshLogs.map((log, index) => (
+                                <p
+                                  key={`${log}-${index}`}
+                                  className="text-[11px] leading-relaxed text-muted-foreground/80"
+                                >
+                                  {log}
+                                </p>
+                              ))}
+                            </div>
+                          )}
+
+                          <button
+                            type="button"
+                            onClick={handleConnectSsh}
+                            disabled={isConnectingSsh}
+                            className="flex h-11 items-center justify-center gap-2 rounded-lg border border-primary/30 bg-primary px-3 text-xs font-medium text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-60"
+                          >
+                            <Server className="size-3.5" />
+                            {isConnectingSsh ? 'Connecting...' : 'Connect with SSH'}
+                          </button>
+                        </>
+                      )}
+
+                      {subView === 'zip' && (
+                        <ZipImportCard
+                          zipFile={zipFile}
+                          setZipFile={setZipFile}
+                          zipImportError={zipImportError}
+                          zipArchiveName={zipArchiveName}
+                          zipExtractedPath={zipExtractedPath}
+                          zipTree={zipTree}
+                          isImportingZip={isImportingZip}
+                          onImport={handleZipImport}
+                          onBack={closeZipImportCard}
+                          onOpenPreview={() => setIsZipPreviewOpen(true)}
+                        />
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1542,7 +1519,21 @@ function TemplateCard({
   onCreate: () => void;
   onBack: () => void;
 }) {
-  const filteredTemplates = TEMPLATE_OPTIONS.filter((template) => template.modes.includes(mode));
+  const filteredTemplates = getBuilderTemplateOptions({
+    mode,
+    runtimeProvider:
+      mode === 'web' || mode === 'local'
+        ? (DEFAULT_WEB_RUNTIME_PROVIDER as 'e2b' | 'local' | 'codesandbox' | 'webcontainers')
+        : mode === 'apps'
+          ? 'e2b'
+          : null,
+  });
+  const hasSelectedTemplate = filteredTemplates.some((template) => template.id === selectedTemplateId);
+
+  useEffect(() => {
+    if (hasSelectedTemplate || filteredTemplates.length === 0) return;
+    onSelectTemplate(filteredTemplates[0]!.id);
+  }, [filteredTemplates, hasSelectedTemplate, onSelectTemplate]);
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-dashed border-border/60 bg-card/40 p-3">
@@ -1556,7 +1547,7 @@ function TemplateCard({
             <p className="text-[11px] text-muted-foreground/70">
               {mode === 'apps'
                 ? 'Create a starter workspace from a mobile app template.'
-                : 'Create a starter workspace from a web template card.'}
+                : `Create a starter workspace from a ${mode === 'local' ? 'local' : 'web'} template card.`}
             </p>
           </div>
         </div>
@@ -1570,22 +1561,39 @@ function TemplateCard({
       </div>
 
       <div className="max-h-52 overflow-y-auto rounded-lg border border-border/50 bg-card/40 p-2">
-        {filteredTemplates.map((template) => (
-          <button
-            key={template.id}
-            type="button"
-            onClick={() => onSelectTemplate(template.id)}
-            className={cn(
-              'mb-2 flex w-full flex-col rounded-lg border px-3 py-2 text-left transition-colors last:mb-0',
-              selectedTemplateId === template.id
-                ? 'border-primary/30 bg-primary/15 text-foreground'
-                : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
-            )}
-          >
-            <span className="text-xs font-medium">{template.name}</span>
-            <span className="mt-1 text-[11px] leading-relaxed opacity-80">{template.description}</span>
-          </button>
-        ))}
+        {(mode === 'web' || mode === 'local') && (
+          <div className="mb-2 rounded-lg border border-border/40 bg-card/60 px-3 py-2 text-[11px] text-muted-foreground">
+            Runtime provider:{' '}
+            <span className="font-medium uppercase text-foreground">{DEFAULT_WEB_RUNTIME_PROVIDER}</span>
+          </div>
+        )}
+        {filteredTemplates.length === 0 ? (
+          <div className="rounded-lg border border-border/40 bg-card/50 px-3 py-4 text-[11px] leading-relaxed text-muted-foreground">
+            No templates are available for the current mode and runtime provider yet.
+          </div>
+        ) : (
+          filteredTemplates.map((template) => (
+            <button
+              key={template.id}
+              type="button"
+              onClick={() => onSelectTemplate(template.id)}
+              className={cn(
+                'mb-2 flex w-full flex-col rounded-lg border px-3 py-2 text-left transition-colors last:mb-0',
+                selectedTemplateId === template.id
+                  ? 'border-primary/30 bg-primary/15 text-foreground'
+                  : 'border-border/40 bg-card/50 text-muted-foreground hover:bg-muted/30 hover:text-foreground',
+              )}
+            >
+              <span className="text-xs font-medium">{template.name}</span>
+              <span className="mt-1 text-[11px] leading-relaxed opacity-80">{template.description}</span>
+              {template.sourceUrl ? (
+                <span className="mt-1 text-[10px] uppercase tracking-[0.16em] opacity-50">
+                  Source {new URL(template.sourceUrl).hostname.replace(/^www\./, '')}
+                </span>
+              ) : null}
+            </button>
+          ))
+        )}
       </div>
 
       {templateError && <p className="text-[11px] text-red-400">{templateError}</p>}

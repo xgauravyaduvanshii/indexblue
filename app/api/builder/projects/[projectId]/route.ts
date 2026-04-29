@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { z } from 'zod';
 import { auth } from '@/lib/auth';
 import { getBuilderProjectByIdForUser, updateBuilderProjectTheme } from '@/lib/db/builder-project-queries';
+import { deleteChatById } from '@/lib/db/queries';
 
 const canvasFrameVersionSchema = z.object({
   id: z.string(),
@@ -164,4 +165,29 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
 
   return Response.json({ project });
+}
+
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ projectId: string }> }) {
+  const session = await auth.api.getSession({ headers: request.headers });
+
+  if (!session?.user?.id) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const { projectId } = await params;
+  const project = await getBuilderProjectByIdForUser({
+    projectId,
+    userId: session.user.id,
+  });
+
+  if (!project) {
+    return Response.json({ error: 'Project not found' }, { status: 404 });
+  }
+
+  await deleteChatById({ id: project.chatId });
+
+  return Response.json({
+    ok: true,
+    deletedProjectId: projectId,
+  });
 }
