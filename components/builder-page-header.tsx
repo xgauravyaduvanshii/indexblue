@@ -14,7 +14,10 @@ type BuilderPageHeaderProps = {
 export function BuilderPageHeader({ active, className }: BuilderPageHeaderProps) {
   const pathname = usePathname();
   const resolvedActive =
-    active ?? (pathname === '/builder/projects' || pathname?.startsWith('/builder/projects/') ? 'projects' : 'builder');
+    active ??
+    (pathname === '/builder/projects' || pathname?.startsWith('/builder/projects/')
+      ? 'projects'
+      : 'builder');
 
   return (
     <header className={cn('flex w-full items-center justify-between gap-4', className)}>

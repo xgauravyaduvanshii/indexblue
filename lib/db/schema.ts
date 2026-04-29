@@ -17,6 +17,15 @@ import { generateId } from 'ai';
 import { InferSelectModel } from 'drizzle-orm';
 import { v7 as uuidv7 } from 'uuid';
 import type { BuilderProjectMetadata } from '@/lib/builder/project-metadata';
+import type {
+  CloudInfraCommandPayload,
+  CloudInfraMachineMetadata,
+  CloudInfraMetricSnapshot,
+  CloudInfraProcessSnapshot,
+  CloudInfraSandboxPorts,
+  PlatformApiKeyStatus,
+  PlatformDeviceSessionStatus,
+} from '@/lib/cloud/types';
 
 export const user = pgTable('user', {
   id: text('id').primaryKey(),
@@ -321,6 +330,229 @@ export const builderProjectEvent = pgTable(
     index('builderProjectEvent_projectId_idx').on(table.projectId),
     index('builderProjectEvent_projectId_createdAt_idx').on(table.projectId, table.createdAt),
     index('builderProjectEvent_channel_idx').on(table.channel),
+  ],
+);
+
+export const platformApiKey = pgTable(
+  'platform_api_key',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    label: text('label').notNull(),
+    tokenId: text('token_id').notNull(),
+    keyPrefix: text('key_prefix').notNull(),
+    keyHash: text('key_hash').notNull(),
+    status: text('status').$type<PlatformApiKeyStatus>().notNull().default('active'),
+    lastUsedAt: timestamp('last_used_at'),
+    revokedAt: timestamp('revoked_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('platformApiKey_userId_idx').on(table.userId),
+    index('platformApiKey_userId_status_idx').on(table.userId, table.status),
+    uniqueIndex('platformApiKey_tokenId_unique').on(table.tokenId),
+  ],
+);
+
+export const platformDeviceSession = pgTable(
+  'platform_device_session',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    code: text('code').notNull(),
+    userId: text('user_id').references(() => user.id, { onDelete: 'set null' }),
+    status: text('status').$type<PlatformDeviceSessionStatus>().notNull().default('pending'),
+    requestedLabel: text('requested_label'),
+    apiKeyId: text('api_key_id').references(() => platformApiKey.id, { onDelete: 'set null' }),
+    encryptedApiKey: text('encrypted_api_key'),
+    expiresAt: timestamp('expires_at').notNull(),
+    approvedAt: timestamp('approved_at'),
+    claimedAt: timestamp('claimed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex('platformDeviceSession_code_unique').on(table.code),
+    index('platformDeviceSession_status_idx').on(table.status),
+    index('platformDeviceSession_userId_idx').on(table.userId),
+  ],
+);
+
+export const cloudInfraMachine = pgTable(
+  'cloud_infra_machine',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    apiKeyId: text('api_key_id').references(() => platformApiKey.id, { onDelete: 'set null' }),
+    name: text('name').notNull(),
+    machineId: text('machine_id').notNull(),
+    hostname: text('hostname'),
+    platform: text('platform'),
+    arch: text('arch'),
+    release: text('release'),
+    nodeVersion: text('node_version'),
+    cliVersion: text('cli_version'),
+    status: text('status').notNull().default('offline'),
+    connectedAt: timestamp('connected_at'),
+    lastSeenAt: timestamp('last_seen_at'),
+    lastHeartbeatAt: timestamp('last_heartbeat_at'),
+    latencyMs: integer('latency_ms'),
+    totalCommands: integer('total_commands').notNull().default(0),
+    totalFsOps: integer('total_fs_ops').notNull().default(0),
+    totalDataTransferred: integer('total_data_transferred').notNull().default(0),
+    latestMetrics: jsonb('latest_metrics').$type<CloudInfraMetricSnapshot | null>().default(null),
+    latestProcesses: jsonb('latest_processes')
+      .$type<CloudInfraProcessSnapshot[]>()
+      .notNull()
+      .default([]),
+    metadata: jsonb('metadata')
+      .$type<CloudInfraMachineMetadata>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('cloudInfraMachine_userId_idx').on(table.userId),
+    index('cloudInfraMachine_userId_status_idx').on(table.userId, table.status),
+    uniqueIndex('cloudInfraMachine_userId_machineId_unique').on(table.userId, table.machineId),
+  ],
+);
+
+export const cloudInfraMetric = pgTable(
+  'cloud_infra_metric',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    infraId: text('infra_id')
+      .notNull()
+      .references(() => cloudInfraMachine.id, { onDelete: 'cascade' }),
+    cpuPercent: real('cpu_percent').notNull().default(0),
+    memoryPercent: real('memory_percent').notNull().default(0),
+    uptimeSeconds: integer('uptime_seconds').notNull().default(0),
+    networkRxBytes: integer('network_rx_bytes').notNull().default(0),
+    networkTxBytes: integer('network_tx_bytes').notNull().default(0),
+    processCount: integer('process_count').notNull().default(0),
+    sandboxCount: integer('sandbox_count').notNull().default(0),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('cloudInfraMetric_infraId_idx').on(table.infraId),
+    index('cloudInfraMetric_infraId_createdAt_idx').on(table.infraId, table.createdAt),
+  ],
+);
+
+export const cloudInfraSandbox = pgTable(
+  'cloud_infra_sandbox',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    infraId: text('infra_id')
+      .notNull()
+      .references(() => cloudInfraMachine.id, { onDelete: 'cascade' }),
+    slug: text('slug').notNull(),
+    name: text('name').notNull(),
+    rootPath: text('root_path').notNull(),
+    startCommand: text('start_command'),
+    status: text('status').notNull().default('stopped'),
+    pid: integer('pid'),
+    ports: jsonb('ports')
+      .$type<CloudInfraSandboxPorts>()
+      .notNull()
+      .default([]),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    startCount: integer('start_count').notNull().default(0),
+    lastStartedAt: timestamp('last_started_at'),
+    lastStoppedAt: timestamp('last_stopped_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('cloudInfraSandbox_infraId_idx').on(table.infraId),
+    uniqueIndex('cloudInfraSandbox_infraId_slug_unique').on(table.infraId, table.slug),
+  ],
+);
+
+export const cloudInfraCommand = pgTable(
+  'cloud_infra_command',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    infraId: text('infra_id')
+      .notNull()
+      .references(() => cloudInfraMachine.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(),
+    status: text('status').notNull().default('queued'),
+    payload: jsonb('payload')
+      .$type<CloudInfraCommandPayload>()
+      .notNull()
+      .default({}),
+    result: jsonb('result').$type<Record<string, unknown>>().notNull().default({}),
+    errorMessage: text('error_message'),
+    startedAt: timestamp('started_at'),
+    completedAt: timestamp('completed_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index('cloudInfraCommand_infraId_idx').on(table.infraId),
+    index('cloudInfraCommand_userId_idx').on(table.userId),
+    index('cloudInfraCommand_infraId_status_createdAt_idx').on(table.infraId, table.status, table.createdAt),
+  ],
+);
+
+export const cloudInfraCommandEvent = pgTable(
+  'cloud_infra_command_event',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    commandId: text('command_id')
+      .notNull()
+      .references(() => cloudInfraCommand.id, { onDelete: 'cascade' }),
+    infraId: text('infra_id')
+      .notNull()
+      .references(() => cloudInfraMachine.id, { onDelete: 'cascade' }),
+    stream: text('stream').notNull().default('stdout'),
+    message: text('message').notNull(),
+    sequence: integer('sequence').notNull().default(0),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('cloudInfraCommandEvent_commandId_idx').on(table.commandId),
+    index('cloudInfraCommandEvent_infraId_idx').on(table.infraId),
+    index('cloudInfraCommandEvent_commandId_sequence_idx').on(table.commandId, table.sequence),
   ],
 );
 
@@ -995,6 +1227,13 @@ export type BuilderProjectAsset = InferSelectModel<typeof builderProjectAsset>;
 export type BuilderProjectJob = InferSelectModel<typeof builderProjectJob>;
 export type BuilderProjectToolState = InferSelectModel<typeof builderProjectToolState>;
 export type BuilderProjectEvent = InferSelectModel<typeof builderProjectEvent>;
+export type PlatformApiKey = InferSelectModel<typeof platformApiKey>;
+export type PlatformDeviceSession = InferSelectModel<typeof platformDeviceSession>;
+export type CloudInfraMachine = InferSelectModel<typeof cloudInfraMachine>;
+export type CloudInfraMetric = InferSelectModel<typeof cloudInfraMetric>;
+export type CloudInfraSandbox = InferSelectModel<typeof cloudInfraSandbox>;
+export type CloudInfraCommand = InferSelectModel<typeof cloudInfraCommand>;
+export type CloudInfraCommandEvent = InferSelectModel<typeof cloudInfraCommandEvent>;
 export type Verification = InferSelectModel<typeof verification>;
 export type Chat = InferSelectModel<typeof chat>;
 export type Message = InferSelectModel<typeof message>;

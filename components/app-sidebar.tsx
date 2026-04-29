@@ -33,6 +33,7 @@ import {
   ChevronDown,
   MoreHorizontal,
   Pencil,
+  Server,
   Share2,
   Trash2,
   Keyboard,
@@ -886,6 +887,30 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                 >
                   <CodeIcon size={18} weight="regular" />
                   <span className="group-data-[collapsible=icon]:hidden">Builder</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+
+          {stableUser && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip="Cloud Infrastructure"
+                className={cn(
+                  'hover:bg-primary/10 transition-all duration-200',
+                  pathname === '/cloud-infrastructure' || pathname?.startsWith('/cloud-infrastructure/')
+                    ? 'bg-primary/15 text-foreground font-medium'
+                    : '',
+                )}
+              >
+                <Link
+                  href="/cloud-infrastructure"
+                  onClick={closeMobileSidebar}
+                  className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:w-full"
+                >
+                  <Server className="h-[18px] w-[18px]" />
+                  <span className="group-data-[collapsible=icon]:hidden">Cloud Infrastructure</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

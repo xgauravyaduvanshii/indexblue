@@ -66,6 +66,7 @@ export const serverEnv = createEnv({
     BUILDER_WEB_RUNTIME_PROVIDER: z.enum(['e2b', 'local', 'codesandbox', 'webcontainers']).optional(),
     CODESANDBOX_API_KEY: z.string().optional(),
     CSB_API_KEY: z.string().optional(),
+    CLOUD_PREVIEW_BASE_DOMAIN: z.string().optional(),
     UNSPLASH_ACCESS_KEY: z.string().optional(),
     UNSPLASH_SECRET_KEY: z.string().optional(),
     UNSPLASH_APPLICATION_ID: z.string().optional(),

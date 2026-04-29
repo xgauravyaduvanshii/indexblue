@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, type ChangeEvent } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import {
   AppWindow,
@@ -716,6 +717,19 @@ export default function BuilderPage() {
                     }}
                   />
                 </div>
+
+                <Link
+                  href="/cloud-infrastructure"
+                  className="flex items-center justify-between rounded-xl border border-border/60 bg-background/55 px-4 py-3 text-left transition-colors hover:bg-muted/40"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-foreground">Cloud Infrastructure</p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      Connect live CLI machines, watch health, and control remote sandboxes.
+                    </p>
+                  </div>
+                  <Server className="size-4 text-primary" />
+                </Link>
               </div>
             )}
 

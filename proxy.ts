@@ -1,11 +1,27 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionCookie } from 'better-auth/cookies';
+import { buildCloudPreviewPath, parseCloudPreviewHost } from '@/lib/cloud/previews';
 
 const authRoutes = ['/sign-in', '/sign-up'];
 const protectedRoutes = ['/settings', '/searches'];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const previewHost = parseCloudPreviewHost(request.headers.get('host'));
+
+  if (previewHost && pathname.startsWith('/api/cloud/preview-tunnel')) {
+    return NextResponse.next();
+  }
+
+  if (previewHost && !pathname.startsWith('/cloud-preview/')) {
+    const rewriteUrl = request.nextUrl.clone();
+    rewriteUrl.pathname = buildCloudPreviewPath({
+      infraId: previewHost.infraId,
+      port: previewHost.port,
+      pathname,
+    });
+    return NextResponse.rewrite(rewriteUrl);
+  }
 
   if (pathname === '/api/search') return NextResponse.next();
   if (pathname.startsWith('/new') || pathname.startsWith('/api/search')) {

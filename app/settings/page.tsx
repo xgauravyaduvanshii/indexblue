@@ -11,6 +11,7 @@ import {
   MemoriesSection,
   UploadsSection,
 } from '@/components/settings-dialog';
+import { PlatformApiKeySection } from '@/components/platform-api-key-section';
 import { cn } from '@/lib/utils';
 import { HugeiconsIcon } from '@/components/ui/hugeicons';
 import {
@@ -58,6 +59,7 @@ function SettingsContent() {
     { value: 'subscription', label: 'Subscription', icon: Crown02Icon },
     { value: 'preferences', label: 'Preferences', icon: Settings02Icon },
     { value: 'builder', label: 'Builder', icon: Rocket01Icon },
+    { value: 'platform-api', label: 'Platform API Key', icon: ConnectIcon },
     { value: 'connectors', label: 'Connectors', icon: ConnectIcon },
     { value: 'memories', label: 'Memories', icon: Brain02Icon },
     { value: 'uploads', label: 'Uploads', icon: Attachment01Icon },
@@ -311,7 +313,7 @@ function SettingsContent() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-pixel-grid text-xs text-muted-foreground/30">05</span>
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">06</span>
                       <h2 className="text-lg font-semibold">Connectors</h2>
                     </div>
                     <p className="text-sm text-muted-foreground">Connect your external services and data sources</p>
@@ -340,11 +342,26 @@ function SettingsContent() {
                 </div>
               </TabsContent>
 
+              <TabsContent value="platform-api" className="m-0">
+                <div className="space-y-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">05</span>
+                      <h2 className="text-lg font-semibold">Platform API Key</h2>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      Generate, revoke, and rotate the keys that power CLI access to your infrastructure
+                    </p>
+                  </div>
+                  <PlatformApiKeySection />
+                </div>
+              </TabsContent>
+
               <TabsContent value="memories" className="m-0">
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-pixel-grid text-xs text-muted-foreground/30">06</span>
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">07</span>
                       <h2 className="text-lg font-semibold">Memories</h2>
                     </div>
                     <p className="text-sm text-muted-foreground">Manage your stored memories and context</p>
@@ -357,7 +374,7 @@ function SettingsContent() {
                 <div className="space-y-4">
                   <div>
                     <div className="flex items-center gap-2">
-                      <span className="font-pixel-grid text-xs text-muted-foreground/30">07</span>
+                      <span className="font-pixel-grid text-xs text-muted-foreground/30">08</span>
                       <h2 className="text-lg font-semibold">Uploads</h2>
                     </div>
                     <p className="text-sm text-muted-foreground">View and manage files you&apos;ve uploaded in chats</p>
@@ -400,7 +417,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
                   <div className="rounded-xl border border-border/60 p-2 space-y-1">
-                    {[1, 2, 3, 4, 5, 6, 7].map((i) => (
+                    {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
                       <div key={i} className="h-10 bg-muted/30 rounded-lg" />
                     ))}
                   </div>
