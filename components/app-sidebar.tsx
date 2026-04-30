@@ -45,6 +45,7 @@ import {
   LogOut,
   Pin,
   PinOff,
+  Palette,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -1007,6 +1008,31 @@ export const AppSidebar = memo(({ user, onHistoryClick, isProUser }: AppSidebarP
                 >
                   <AudioLinesIcon size={18} />
                   <span className="group-data-[collapsible=icon]:hidden">Voice</span>
+                </Link>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+
+          {/* Paintings */}
+          {stableUser && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                asChild
+                tooltip="Paintings"
+                className={cn(
+                  'hover:bg-primary/10 transition-all duration-200',
+                  pathname === '/paintings' || pathname?.startsWith('/paintings/')
+                    ? 'bg-primary/15 text-foreground font-medium'
+                    : '',
+                )}
+              >
+                <Link
+                  href="/paintings"
+                  onClick={closeMobileSidebar}
+                  className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:w-full"
+                >
+                  <Palette className="h-[18px] w-[18px]" />
+                  <span className="group-data-[collapsible=icon]:hidden">Paintings</span>
                 </Link>
               </SidebarMenuButton>
             </SidebarMenuItem>

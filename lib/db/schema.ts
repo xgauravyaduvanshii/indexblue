@@ -333,6 +333,66 @@ export const builderProjectEvent = pgTable(
   ],
 );
 
+export const paintingRun = pgTable(
+  'painting_run',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    provider: text('provider').notNull(),
+    model: text('model').notNull(),
+    operation: text('operation').notNull(),
+    prompt: text('prompt').notNull().default(''),
+    status: text('status').notNull().default('queued'),
+    requestPayload: jsonb('request_payload').$type<Record<string, unknown>>().notNull().default({}),
+    resultPayload: jsonb('result_payload').$type<Record<string, unknown>>().notNull().default({}),
+    errorMessage: text('error_message'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at')
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    completedAt: timestamp('completed_at'),
+  },
+  (table) => [
+    index('paintingRun_userId_idx').on(table.userId),
+    index('paintingRun_userId_createdAt_idx').on(table.userId, table.createdAt),
+    index('paintingRun_status_idx').on(table.status),
+    index('paintingRun_provider_idx').on(table.provider),
+  ],
+);
+
+export const paintingAsset = pgTable(
+  'painting_asset',
+  {
+    id: text('id')
+      .primaryKey()
+      .$defaultFn(() => generateId()),
+    runId: text('run_id')
+      .notNull()
+      .references(() => paintingRun.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => user.id, { onDelete: 'cascade' }),
+    role: text('role').notNull(),
+    storageUrl: text('storage_url').notNull(),
+    storageKey: text('storage_key').notNull(),
+    mimeType: text('mime_type').notNull(),
+    width: integer('width'),
+    height: integer('height'),
+    metadata: jsonb('metadata').$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (table) => [
+    index('paintingAsset_runId_idx').on(table.runId),
+    index('paintingAsset_userId_idx').on(table.userId),
+    index('paintingAsset_role_idx').on(table.role),
+  ],
+);
+
 export const platformApiKey = pgTable(
   'platform_api_key',
   {
@@ -850,6 +910,19 @@ export const userPreferences = pgTable('user_preferences', {
       };
       'scira-preferred-models'?: string[];
       'scira-visible-modes'?: string[];
+      'paintings-provider'?: string;
+      'paintings-model'?: string;
+      'paintings-size'?: string;
+      'paintings-operation'?: 'generate' | 'edit' | 'remix' | 'upscale';
+      'paintings-count'?: number;
+      'paintings-quality'?: string;
+      'paintings-background'?: string;
+      'paintings-seed'?: number | null;
+      'paintings-negative-prompt'?: string;
+      'paintings-prompt-upsampling'?: boolean;
+      'paintings-history-query'?: string;
+      'paintings-history-status'?: 'all' | 'running' | 'completed' | 'error';
+      'paintings-history-provider'?: string;
     }>()
     .notNull()
     .default({}),
@@ -1028,6 +1101,8 @@ export const userRelations = relations(user, ({ many }) => ({
   builderProjectJobs: many(builderProjectJob),
   builderProjectToolStates: many(builderProjectToolState),
   builderProjectEvents: many(builderProjectEvent),
+  paintingRuns: many(paintingRun),
+  paintingAssets: many(paintingAsset),
   extremeSearchUsages: many(extremeSearchUsage),
   messageUsages: many(messageUsage),
   anthropicUsages: many(anthropicUsage),
@@ -1217,6 +1292,25 @@ export const builderProjectEventRelations = relations(builderProjectEvent, ({ on
   }),
 }));
 
+export const paintingRunRelations = relations(paintingRun, ({ one, many }) => ({
+  user: one(user, {
+    fields: [paintingRun.userId],
+    references: [user.id],
+  }),
+  assets: many(paintingAsset),
+}));
+
+export const paintingAssetRelations = relations(paintingAsset, ({ one }) => ({
+  run: one(paintingRun, {
+    fields: [paintingAsset.runId],
+    references: [paintingRun.id],
+  }),
+  user: one(user, {
+    fields: [paintingAsset.userId],
+    references: [user.id],
+  }),
+}));
+
 export type User = InferSelectModel<typeof user>;
 export type Session = InferSelectModel<typeof session>;
 export type Account = InferSelectModel<typeof account>;
@@ -1227,6 +1321,8 @@ export type BuilderProjectAsset = InferSelectModel<typeof builderProjectAsset>;
 export type BuilderProjectJob = InferSelectModel<typeof builderProjectJob>;
 export type BuilderProjectToolState = InferSelectModel<typeof builderProjectToolState>;
 export type BuilderProjectEvent = InferSelectModel<typeof builderProjectEvent>;
+export type PaintingRun = InferSelectModel<typeof paintingRun>;
+export type PaintingAsset = InferSelectModel<typeof paintingAsset>;
 export type PlatformApiKey = InferSelectModel<typeof platformApiKey>;
 export type PlatformDeviceSession = InferSelectModel<typeof platformDeviceSession>;
 export type CloudInfraMachine = InferSelectModel<typeof cloudInfraMachine>;
